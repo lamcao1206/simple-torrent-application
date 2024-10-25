@@ -11,6 +11,21 @@ class Tracker:
         self.peers = {}
         print(f"Tracker listening on {host}:{port}")
 
+    def start(self):
+        try:
+            while True:
+                client, addr = self.sock.accept()
+
+                # Create new thread for each socket client
+                client_thread = threading.Thread(
+                    target=self.handle_client, args=(client, addr), daemon=True
+                )
+                client_thread.start()
+        except KeyboardInterrupt:
+            print("\nShutting down...")
+        finally:
+            self.sock.close()
+
     def handle_client(self, client, addr):
         """Handles communication with a single client."""
         try:
@@ -27,27 +42,14 @@ class Tracker:
                 if data == "First Connection":
                     peer = Peer(ip_address=addr[0], sock=client)
                     self.peers[addr] = peer
-                print(f"Received from client ${addr[0]}:", data)
+                    client.send(b"ACK")
+
+                print(f"Received from client {addr[0]}:", data)
                 client.send(b"OK received")
         except ConnectionResetError:
             print(f"Connection reset by {addr}")
         finally:
             client.close()
-
-    def start(self):
-        try:
-            while True:
-                client, addr = self.sock.accept()
-
-                # Create new thread for each socket
-                client_thread = threading.Thread(
-                    target=self.handle_client, args=(client, addr), daemon=True
-                )
-                client_thread.start()
-        except KeyboardInterrupt:
-            print("\nShutting down...")
-        finally:
-            self.sock.close()
 
 
 def main():
