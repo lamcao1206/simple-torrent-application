@@ -1,26 +1,45 @@
 import socket
-import sys
+import time
+import yaml
 
 
-class Client:
+class Node:
     def __init__(self, host="localhost", port=8000) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect(("localhost", 8000))
+        self.sock.connect((host, port))
+        self.sock.send("first".encode())
+        print(
+            "Sending address: "
+            + str(self.sock.getsockname()[0])
+            + " "
+            + str(self.sock.getsockname()[1])
+        )
 
     def start(self):
-        msg = self.sock.recv(1024)
-        print(msg)
-
-        while msg:
-            print("Received ", msg.decode())
-            msg = self.sock.recv(1024)
+        try:
+            while True:
+                time.sleep(0.5)
+                data = self.sock.recv(1024).decode()
+                print("Received from server: ", data)
+                msg = input("Sending to server: ")
+                self.sock.send(msg.encode())
+        except KeyboardInterrupt:
+            print("Got Interupted. End...")
+        finally:
+            self.sock.close()
 
 
 def main():
-    host = sys.argv[1] if len(sys.argv) > 1 else "localhost"
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
-    client = Client(host, port)
-    client.start()
+    try:
+        with open("config.yaml", "r") as file:
+            config = yaml.safe_load(file)
+
+        host = config["server"]["host"]
+        port = config["server"]["port"]
+        node = Node(host, port)
+        node.start()
+    except ConnectionRefusedError:
+        print("Tracker refused to connect")
 
 
 if __name__ == "__main__":

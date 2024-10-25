@@ -1,5 +1,6 @@
 import socket
 import yaml
+import threading
 
 
 class Tracker:
@@ -9,12 +10,36 @@ class Tracker:
         self.sock.listen(max_clients)
         print(f"Tracker listening on {host}:{port}")
 
-    def start(self):
-        while True:
-            client, addr = self.sock.accept()
-            print(f"Connect from {str(addr)}")
-            client.send(b"Hello from Tracker")
+    def handle_client(self, client, addr):
+        """Handles communication with a single client."""
+        try:
+            print(f"Connected to {addr}")
+            while True:
+                data = client.recv(1024).decode()
+                if not data:  # Client closed connection
+                    print(f"Connection closed by {addr}")
+                    break
+                print("Received from client:", data)
+                client.send(b"OK received")
+        except ConnectionResetError:
+            print(f"Connection reset by {addr}")
+        finally:
             client.close()
+
+    def start(self):
+        try:
+            while True:
+                client, addr = self.sock.accept()
+
+                # Create new thread for each socket
+                client_thread = threading.Thread(
+                    target=self.handle_client, args=(client, addr), daemon=True
+                )
+                client_thread.start()
+        except KeyboardInterrupt:
+            print("\nShutting down...")
+        finally:
+            self.sock.close()
 
 
 def main():
