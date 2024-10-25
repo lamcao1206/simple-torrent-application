@@ -15,16 +15,22 @@ class Tracker:
         try:
             while True:
                 client, addr = self.sock.accept()
-
                 # Create new thread for each socket client
                 client_thread = threading.Thread(
                     target=self.handle_client, args=(client, addr), daemon=True
                 )
                 client_thread.start()
         except KeyboardInterrupt:
-            print("\nShutting down...")
-        finally:
-            self.sock.close()
+            # Notifying all connected nodes that the tracker is closed.
+            print("\nTracker shutting down...")
+            self.close()
+
+    def close(self):
+        self.sock.close()
+        for peer in self.peers.values():
+            print("Shutting down")
+            peer.peer_socket.close()
+            peer.peer_thread.join()
 
     def handle_client(self, client, addr):
         """Handles communication with a single client."""
@@ -40,7 +46,7 @@ class Tracker:
 
                 # First connection of node client
                 if data == "First Connection":
-                    peer = Peer(ip_address=addr[0], sock=client)
+                    peer = Peer(ip_address=addr[0], peer_socket=client)
                     self.peers[addr] = peer
                     client.send(b"ACK")
 
@@ -52,6 +58,18 @@ class Tracker:
             client.close()
 
 
+class Peer:
+    def __init__(
+        self,
+        ip_address: str = None,
+        peer_socket: socket.socket = None,
+        peer_thread: threading.Thread = None,
+    ):
+        self.ip_address = ip_address
+        self.peer_socket = peer_socket
+        self.peer_thread = peer_thread
+
+
 def main():
     with open("config.yaml", "r") as file:
         config = yaml.safe_load(file)
@@ -61,12 +79,6 @@ def main():
     max_clients = config["server"]["max_clients"]
     tracker = Tracker(host, port, max_clients)
     tracker.start()
-
-
-class Peer:
-    def __init__(self, ip_address=None, sock=None):
-        self.ip_address = ip_address
-        self.sock = sock
 
 
 if __name__ == "__main__":
