@@ -8,6 +8,7 @@ class Tracker:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind((host, port))
         self.sock.listen(max_clients)
+        self.peers = {}
         print(f"Tracker listening on {host}:{port}")
 
     def handle_client(self, client, addr):
@@ -16,10 +17,17 @@ class Tracker:
             print(f"Connected to {addr}")
             while True:
                 data = client.recv(1024).decode()
-                if not data:  # Client closed connection
+
+                # Connection close
+                if not data:
                     print(f"Connection closed by {addr}")
                     break
-                print("Received from client:", data)
+
+                # First connection of node client
+                if data == "First Connection":
+                    peer = Peer(ip_address=addr[0], sock=client)
+                    self.peers[addr] = peer
+                print(f"Received from client ${addr[0]}:", data)
                 client.send(b"OK received")
         except ConnectionResetError:
             print(f"Connection reset by {addr}")
@@ -51,6 +59,12 @@ def main():
     max_clients = config["server"]["max_clients"]
     tracker = Tracker(host, port, max_clients)
     tracker.start()
+
+
+class Peer:
+    def __init__(self, ip_address=None, sock=None):
+        self.ip_address = ip_address
+        self.sock = sock
 
 
 if __name__ == "__main__":

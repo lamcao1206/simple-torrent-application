@@ -7,7 +7,7 @@ class Node:
     def __init__(self, host="localhost", port=8000) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((host, port))
-        self.sock.send("first".encode())
+        self.sock.send("First Connection".encode())
         print(
             "Sending address: "
             + str(self.sock.getsockname()[0])
