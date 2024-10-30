@@ -1,61 +1,7 @@
 import socket
 import yaml
 import threading
-
-
-class Tracker:
-    def __init__(self, host="localhost", port=8000, max_clients=10) -> None:
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind((host, port))
-        self.sock.listen(max_clients)
-        self.peers = {}
-        print(f"Tracker listening on {host}:{port}")
-
-    def start(self):
-        try:
-            while True:
-                client, addr = self.sock.accept()
-                # Create new thread for each socket client
-                client_thread = threading.Thread(
-                    target=self.handle_client, args=(client, addr), daemon=True
-                )
-                client_thread.start()
-        except KeyboardInterrupt:
-            # Notifying all connected nodes that the tracker is closed.
-            print("\nTracker shutting down...")
-            self.close()
-
-    def close(self):
-        self.sock.close()
-        for peer in self.peers.values():
-            print("Shutting down")
-            peer.peer_socket.close()
-            peer.peer_thread.join()
-
-    def handle_client(self, client, addr):
-        """Handles communication with a single client."""
-        try:
-            print(f"Connected to {addr}")
-            while True:
-                data = client.recv(1024).decode()
-
-                # Connection close
-                if not data:
-                    print(f"Connection closed by {addr}")
-                    break
-
-                # First connection of node client
-                if data == "First Connection":
-                    peer = Peer(ip_address=addr[0], peer_socket=client)
-                    self.peers[addr] = peer
-                    client.send(b"ACK")
-
-                print(f"Received from client {addr[0]}:", data)
-                client.send(b"OK received")
-        except ConnectionResetError:
-            print(f"Connection reset by {addr}")
-        finally:
-            client.close()
+from typing import Dict
 
 
 class Peer:
@@ -70,15 +16,83 @@ class Peer:
         self.peer_thread = peer_thread
 
 
+class Tracker:
+    def __init__(self, host="localhost", port=8000, max_nodes=10) -> None:
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        # Allow resuable port (temp fix for OSError: [Errno 48])
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        self.sock.bind((host, port))
+        self.sock.listen(max_nodes)
+        self.running = True
+        self.peers: Dict[str, Peer] = {}
+        print(f"Tracker listening on {host}:{port}")
+
+    def start(self):
+        while self.running:
+            try:
+                node_socket, node_addr = self.sock.accept()
+            except Exception as e:
+                print("Catch Exception while starting: ", repr(e))
+                return
+            data = node_socket.recv(1028).decode()
+            if not data:
+                print(f"Connection closed by {node_addr}")
+                break
+
+            # Handle handshake from node
+            if data == "First Connection":
+                new_peer = Peer(
+                    ip_address=node_addr,
+                    peer_socket=node_socket,
+                    peer_thread=threading.Thread(
+                        target=self.handle_node,
+                        args=[node_socket, node_addr],
+                        daemon=True,
+                    ),
+                )
+                self.peers[node_addr] = new_peer
+                node_socket.send(b"ACK")
+            else:
+                if not self.peers[node_addr].peer_thread.is_alive():
+                    self.peers[node_addr].peer_thread.start()
+
+    def close(self):
+        self.running = False
+        self.sock.close()
+        for peer in self.peers.values():
+            peer.peer_socket.send(b"Tracker closed")
+            peer.peer_socket.close()
+
+    def handle_node(self, node_socket: socket.socket, node_addr: str) -> None:
+        """Handles communication with a single node."""
+        with node_socket:
+            while self.running:
+                try:
+                    data = node_socket.recv(1024).decode()
+                except Exception as e:
+                    break
+                print(f"Received data from {node_addr}: {data}")
+                node_socket.send(b"Received data!")
+
+
 def main():
     with open("config.yaml", "r") as file:
         config = yaml.safe_load(file)
 
     host = config["server"]["host"]
     port = config["server"]["port"]
-    max_clients = config["server"]["max_clients"]
-    tracker = Tracker(host, port, max_clients)
-    tracker.start()
+    max_nodes = config["server"]["max_nodes"]
+    tracker = Tracker(host, port, max_nodes)
+    try:
+        tracker.start()
+    except KeyboardInterrupt:
+        print("Keyboard interrupt received. Shutting down tracker.")
+    except Exception as e:
+        print("Got exception:", repr(e))
+    finally:
+        tracker.close()
 
 
 if __name__ == "__main__":
