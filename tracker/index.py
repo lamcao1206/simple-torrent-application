@@ -10,19 +10,15 @@ class Peer:
         ip_address: str = None,
         peer_socket: socket.socket = None,
         peer_thread: threading.Thread = None,
-        magnet_text: str = None,
     ):
         self.ip_address = ip_address
         self.peer_socket = peer_socket
         self.peer_thread = peer_thread
-        self.magnet_text = None
+        self.magnet_text = ""
 
     def close(self):
         try:
-            if self.peer_socket:
-                self.peer_socket.close()
-            if self.peer_thread:
-                self.peer_thread.join()
+            self.peer_socket.close()
         except Exception as e:
             print(f"Error closing peer connection: {repr(e)}")
 
@@ -36,75 +32,67 @@ class Tracker:
 
         self.running = True
         self.peers: Dict[str, Peer] = {}
-        self.node_serve_thread = threading.Thread(target=self.node_serve, daemon=True)
+        self.node_serving_thread = threading.Thread(target=self.node_serve, daemon=True)
         print(f"Tracker listening on {host}:{port}")
 
     def start(self):
-        self.node_serve_thread.start()
+        self.node_serving_thread.start()
         self.tracker_command_shell()
 
     def node_serve(self) -> None:
-        try:
-            while self.running:
-                try:
-                    node_socket, node_addr = self.sock.accept()
-                    print(f"Connection established with {node_addr}")
+        while self.running:
+            try:
+                node_socket, node_addr = self.sock.accept()
+            except Exception as e:
+                return
 
-                    data = node_socket.recv(1028).decode()
+            data = node_socket.recv(1028).decode()
 
-                    if not data:
-                        print(f"Connection closed by {node_addr}")
-                        continue
+            if not data:
+                print(f"Connection closed by {node_addr}")
+                self.remove_peer(node_addr)
+                continue
 
-                    # Handle handshake from node
-                    if data == "First Connection":
-                        peer_thread = threading.Thread(
-                            target=self.handle_node,
-                            args=[node_socket, node_addr],
-                            daemon=True,
-                        )
-                        self.peers[node_addr] = Peer(
-                            ip_address=node_addr,
-                            peer_socket=node_socket,
-                            peer_thread=peer_thread,
-                        )
-                        peer_thread.start()
-                        node_socket.send(b"ACK")
-                except ConnectionAbortedError:
-                    print(f"Connection aborted by client.")
-                except Exception as e:
-                    print(f"Exception during connection handling: {repr(e)}")
-        except KeyboardInterrupt:
-            print("Keyboard interrupt, shutting down tracker...")
-        finally:
-            self.close()
+            # Handle handshake from node
+            if data == "First Connection":
+                peer_thread = threading.Thread(
+                    target=self.handle_node,
+                    args=[node_socket, node_addr],
+                    daemon=True,
+                )
+                self.peers[node_addr] = Peer(
+                    ip_address=node_addr,
+                    peer_socket=node_socket,
+                    peer_thread=peer_thread,
+                )
+                peer_thread.start()
+                node_socket.send(b"ACK")
 
     def close(self):
         self.running = False
         self.sock.close()
         for peer in self.peers.values():
+            peer.peer_socket.send(b"tracker close")
             peer.close()
 
     def handle_node(self, node_socket: socket.socket, node_addr: str) -> None:
         """Handles communication with a single node."""
-        print(f"Handling node {node_addr}")
-        try:
-            with node_socket:
-                while self.running:
-                    data = node_socket.recv(1024).decode()
-                    if not data:
-                        print(f"{node_addr} disconnected.")
-                        break
-                    print(f"Received data from {node_addr}: {data}")
-                    node_socket.send(b"Received data!")
-        except ConnectionResetError:
-            print(f"Connection reset by {node_addr}")
-        except Exception as e:
-            print(f"Exception in handle_node for {node_addr}: {repr(e)}")
-        finally:
-            node_socket.close()
-            self.peers.pop(node_addr, None)
-            print(f"Connection with {node_addr} closed.")
+        while self.running:
+            try:
+                data = node_socket.recv(1024).decode()
+                if not data:
+                    print(f"Connection closed by {node_addr}")
+                    self.remove_peer(node_addr)
+                    print(self.peers)
+                    continue
+            except Exception as e:
+                break
+            print(f"Received data from {node_addr}: {data}")
+            node_socket.send(b"Received data!")
+
+    def remove_peer(self, peer_addr: str) -> None:
+        self.peers[peer_addr].close()
+        self.peers.pop(peer_addr)
 
     def tracker_command_shell(self) -> None:
         while True:
@@ -127,8 +115,10 @@ class Tracker:
                             print(f"Received from {addr}: {response.decode()}")
                         except Exception as e:
                             print(f"Failed to ping {addr}: {repr(e)}")
+                case "list":
+                    for peer_addr in self.peers.keys():
+                        print(str(peer_addr))
                 case "exit":
-                    self.close()
                     break
                 case _:
                     print("Unknown command")

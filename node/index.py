@@ -1,6 +1,7 @@
 import socket
-import time
 import yaml
+import threading
+import sys
 
 
 class Node:
@@ -14,6 +15,10 @@ class Node:
         # Socket for interacting with tracker
         self.tracker_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tracker_socket.connect((tracker_host, tracker_port))
+        self.tracker_listening_thread = threading.Thread(
+            target=self.tracker_listening, daemon=True
+        )
+
         self.handshake()
 
         print(
@@ -35,31 +40,55 @@ class Node:
         else:
             raise ConnectionError("Unexpected response from tracker")
 
-    def start(self):
-        try:
-            while True:
-                time.sleep(0.5)
+    def tracker_listening(self):
+        while True:
+            try:
                 data = self.tracker_socket.recv(1024).decode()
-                print("Received from server: ", data)
-                msg = input("Sending to server: ")
-                self.tracker_socket.send(msg.encode())
-        except KeyboardInterrupt:
-            print("Got Interupted. End...")
-        finally:
-            self.tracker_socket.close()
+            except Exception as e:
+                return
+
+            if data == "tracker close":
+                print("\nTracker closed!")
+                return
+
+            print("Received from tracker: ", data)
+
+    def start(self):
+        self.tracker_listening_thread.start()
+        self.node_command_shell()
+
+    def close(self):
+        self.tracker_socket.close()
+        sys.exit(0)
+
+    def node_command_shell(self) -> None:
+        while True:
+            cmd_input = input(">>> ")
+            cmd_parts = cmd_input.split()
+
+            if not cmd_parts:
+                continue
+
+            match cmd_parts[0]:
+                case "exit":
+                    break
+                case _:
+                    print("Unknown command")
 
 
 def main():
-    try:
-        with open("config.yaml", "r") as file:
-            config = yaml.safe_load(file)
+    with open("config.yaml", "r") as file:
+        config = yaml.safe_load(file)
 
-        host = config["server"]["host"]
-        port = config["server"]["port"]
-        node = Node(host, port)
+    host = config["server"]["host"]
+    port = config["server"]["port"]
+    node = Node(host, port)
+    try:
         node.start()
     except Exception as e:
         print(repr(e))
+    finally:
+        node.close()
 
 
 if __name__ == "__main__":
