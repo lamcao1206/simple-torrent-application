@@ -1,7 +1,7 @@
 import socket
-import yaml
-import threading
+from threading import Thread
 from typing import Dict
+import argparse
 
 
 class Peer:
@@ -9,7 +9,7 @@ class Peer:
         self,
         ip_address: str = None,
         peer_socket: socket.socket = None,
-        peer_thread: threading.Thread = None,
+        peer_thread: Thread = None,
     ):
         self.ip_address = ip_address
         self.peer_socket = peer_socket
@@ -32,8 +32,7 @@ class Tracker:
 
         self.running = True
         self.peers: Dict[str, Peer] = {}
-        self.node_serving_thread = threading.Thread(target=self.node_serve, daemon=True)
-        print(f"Tracker listening on {host}:{port}")
+        self.node_serving_thread = Thread(target=self.node_serve, daemon=True)
 
     def start(self):
         self.node_serving_thread.start()
@@ -55,7 +54,7 @@ class Tracker:
 
             # Handle handshake from node
             if data == "First Connection":
-                peer_thread = threading.Thread(
+                peer_thread = Thread(
                     target=self.handle_node,
                     args=[node_socket, node_addr],
                     daemon=True,
@@ -81,9 +80,7 @@ class Tracker:
             try:
                 data = node_socket.recv(1024).decode()
                 if not data:
-                    print(f"Connection closed by {node_addr}")
                     self.remove_peer(node_addr)
-                    print(self.peers)
                     continue
             except Exception as e:
                 break
@@ -96,7 +93,8 @@ class Tracker:
 
     def tracker_command_shell(self) -> None:
         while True:
-            cmd_input = input(">>> ")
+            sock_name, sock_port = self.sock.getsockname()
+            cmd_input = input(f"{sock_name}:{sock_port} ~ ")
             cmd_parts = cmd_input.split()
             if not cmd_parts:
                 continue
@@ -107,7 +105,7 @@ class Tracker:
                     for addr in self.peers:
                         print(f" - {addr}")
                 case "ping":
-                    print("Pinging all peers")
+
                     for addr, peer in self.peers.items():
                         try:
                             peer.peer_socket.send(b"PING")
@@ -116,26 +114,46 @@ class Tracker:
                         except Exception as e:
                             print(f"Failed to ping {addr}: {repr(e)}")
                 case "list":
-                    for peer_addr in self.peers.keys():
-                        print(str(peer_addr))
+                    for index, peer_addr in enumerate(self.peers.keys()):
+                        print(f"- [{index}] {str(peer_addr)}")
                 case "exit":
                     break
                 case _:
                     print("Unknown command")
 
 
-def main():
-    with open("config.yaml", "r") as file:
-        config = yaml.safe_load(file)
+def cli_parser():
+    parser = argparse.ArgumentParser(
+        prog="Tracker", description="Init the tracker for file system"
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Hostname of the tracker (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        default=8000,
+        type=int,
+        help="Port number of the tracker (default: 8000)",
+    )
+    parser.add_argument(
+        "--max-nodes",
+        type=int,
+        default=10,
+        help="Maximum number of clients (default: 10)",
+    )
+    args = parser.parse_args()
+    return (args.host, args.port, args.max_nodes)
 
-    host = config["server"]["host"]
-    port = config["server"]["port"]
-    max_nodes = config["server"]["max_nodes"]
+
+def main():
+    host, port, max_nodes = cli_parser()
     tracker = Tracker(host, port, max_nodes)
     try:
         tracker.start()
     except KeyboardInterrupt:
-        print("Got Interrupt by Ctrl + C")
+        print("\n[Exception]: Got Interrupt by Ctrl + C")
     finally:
         tracker.close()
 
