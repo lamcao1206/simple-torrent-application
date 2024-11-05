@@ -139,6 +139,32 @@ class Tracker:
         else:
             print(f"Node {node_addr} is offline")
 
+    def investigate(self, IP: str, port: int) -> None:
+        """
+        Investigate the node at IP:Port for its local files' information
+
+        Args:
+            IP (str): _description_
+            port (int): _description_
+        """
+        node_addr = (IP, port)
+        if node_addr in self.peers.keys():
+            peer = self.peers[node_addr]
+            try:
+                with peer.lock:
+                    peer.peer_socket.send(b"INVESTIGATE")
+                    response = peer.peer_socket.recv(BUFFER_SIZE)
+                    peer_file_list = response.decode().split()
+                    print(peer_file_list)
+            except socket.timeout:
+                print(f"Investigation to {node_addr} timed out!!!")
+            except Exception as e:
+                print(f"Node {node_addr} is offline")
+                self.peers.pop(node_addr)
+                return
+        else:
+            print(f"Node {node_addr} is offline")
+
     def tracker_command_shell(self) -> None:
         """
         Command shell loop for the tracker CLI
@@ -150,23 +176,27 @@ class Tracker:
             if not cmd_parts:
                 continue
 
-            match cmd_parts[0]:
-                case "discover":
-                    print("Discovering peers:")
-                    for addr in self.peers:
-                        print(f" - {addr}")
-                case "ping":
+            match cmd_parts[1]:
+                case "--ping":
                     try:
-                        IP, port = cmd_parts[1].split(":")
+                        IP, port = cmd_parts[2].split(":")
                         self.ping(IP, int(port))
                     except IndexError:
-                        print("Usage: ping <IP>:<port>")
+                        print("Usage: transmission-cli --ping <IP>:<port>")
                     except ValueError:
                         print("Invalid IP or port format.")
-                case "list":
+                case "--l":
                     for index, peer_addr in enumerate(self.peers.keys()):
                         print(f"- [{index}] {str(peer_addr)}")
-                case "exit":
+                case "--i":
+                    try:
+                        IP, port = cmd_parts[2].split(":")
+                        self.investigate(IP, int(port))
+                    except IndexError:
+                        print("Usage: transmission-cli --i <IP>:<port>")
+                    except ValueError:
+                        print("Invalid IP or port format.")
+                case "--exit":
                     break
                 case _:
                     print("Unknown command")

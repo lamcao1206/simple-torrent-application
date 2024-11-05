@@ -61,8 +61,8 @@ class Node:
 
             if data == "PING":
                 self.ping_response()
-                continue
-            print("Received from tracker: ", data)
+            elif data == "INVESTIGATE":
+                self.investigate_response()
 
     def node_command_shell(self) -> None:
         """
@@ -88,11 +88,18 @@ class Node:
                 case _:
                     print("Unknown command")
 
-    def ping_response(self):
+    def ping_response(self) -> None:
         """
         Send a response to tracker for "ping" message
         """
         self.tracker_socket.sendall(b"Alive")
+
+    def investigate_response(self):
+        """
+        Return the list of filenames in the staging directory to the tracker
+        """
+        dir_list = os.listdir("staging")
+        self.tracker_socket.sendall(" ".join(dir_list).encode())
 
     def close(self):
         """
