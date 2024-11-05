@@ -7,6 +7,13 @@ import time
 BUFFER_SIZE = 1024
 REQUEST_TIMEOUT = 5
 
+"""
+    ping 127.0.0.1:50082
+    investigate 127.0.0.1:50082
+    list
+    exit
+"""
+
 
 class Peer:
     def __init__(
@@ -16,8 +23,10 @@ class Peer:
         peer_thread: Thread = None,
     ) -> None:
         self.ip_address = ip_address
+        self.upload_address = None
         self.peer_socket = peer_socket
         self.peer_thread = peer_thread
+        self.files = None
         self.lock = Lock()
 
     def close(self):
@@ -96,6 +105,12 @@ class Tracker:
             with self.peers[node_addr].lock:
                 node_socket.send(b"Received data!")
 
+    def fetch_response(self, node_addr: str, file_names: list[str]) -> str:
+        pass
+
+    def push_response(self, node_addr: str, staging_file_name: str) -> str:
+        pass
+
     def remove_peer(self, peer_addr: str) -> None:
         """
         Remove a peer with peer_addr from the dictionary of connected peers (self.peers)
@@ -106,7 +121,7 @@ class Tracker:
         self.peers[peer_addr].close()
         self.peers.pop(peer_addr)
 
-    def ping(self, IP: str, port: int) -> None:
+    def ping_command_shell(self, IP: str, port: int) -> None:
         """
         Send a ping message to the peer at IP:Port and
         measure the latency of the response
@@ -139,13 +154,13 @@ class Tracker:
         else:
             print(f"Node {node_addr} is offline")
 
-    def investigate(self, IP: str, port: int) -> None:
+    def investigate_command_shell(self, IP: str, port: int) -> None:
         """
         Investigate the node at IP:Port for its local files' information
 
         Args:
-            IP (str): _description_
-            port (int): _description_
+            IP (str): IP address
+            port (int): port number
         """
         node_addr = (IP, port)
         if node_addr in self.peers.keys():
@@ -155,6 +170,7 @@ class Tracker:
                     peer.peer_socket.send(b"INVESTIGATE")
                     response = peer.peer_socket.recv(BUFFER_SIZE)
                     peer_file_list = response.decode().split()
+                    peer.files = peer_file_list
                     print(peer_file_list)
             except socket.timeout:
                 print(f"Investigation to {node_addr} timed out!!!")
@@ -164,6 +180,13 @@ class Tracker:
                 return
         else:
             print(f"Node {node_addr} is offline")
+
+    def list_command_shell(self) -> None:
+        """
+        List all the connected peers
+        """
+        for index, peer_addr in enumerate(self.peers.keys()):
+            print(f"- [{index}] {str(peer_addr)}")
 
     def tracker_command_shell(self) -> None:
         """
@@ -180,18 +203,17 @@ class Tracker:
                 case "--ping":
                     try:
                         IP, port = cmd_parts[2].split(":")
-                        self.ping(IP, int(port))
+                        self.ping_command_shell(IP, int(port))
                     except IndexError:
                         print("Usage: transmission-cli --ping <IP>:<port>")
                     except ValueError:
                         print("Invalid IP or port format.")
                 case "--l":
-                    for index, peer_addr in enumerate(self.peers.keys()):
-                        print(f"- [{index}] {str(peer_addr)}")
+                    self.list_all_command_shell()
                 case "--i":
                     try:
                         IP, port = cmd_parts[2].split(":")
-                        self.investigate(IP, int(port))
+                        self.investigate_command_shell(IP, int(port))
                     except IndexError:
                         print("Usage: transmission-cli --i <IP>:<port>")
                     except ValueError:

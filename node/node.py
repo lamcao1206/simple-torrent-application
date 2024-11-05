@@ -5,6 +5,24 @@ import sys
 import os
 import argparse
 
+"""
+	add file1.txt file2.txt file3.txt 
+	remove file1.txt file2.txt file3.txt 
+	log 
+	push 
+	fetch
+	exit
+"""
+
+
+class Metafile:
+    def __init__(
+        self, file_name: str, full_bytes_size: int, curr_bytes_size: int
+    ) -> None:
+        self.file_name = file_name
+        self.full_bytes_size = full_bytes_size
+        self.curr_bytes_size = curr_bytes_size
+
 
 class Node:
     def __init__(self, tracker_host="127.0.0.1", tracker_port=8000) -> None:
@@ -19,6 +37,7 @@ class Node:
         self.tracker_listening_thread = Thread(
             target=self.tracker_listening, daemon=True
         )
+        self.staging_file = []  # List of files to be staged for publishing
 
     def start(self) -> None:
         """
@@ -63,6 +82,33 @@ class Node:
                 self.ping_response()
             elif data == "INVESTIGATE":
                 self.investigate_response()
+            else:
+                raise RuntimeError("Unknown message from tracker")
+
+    def add(self, file_list) -> None:
+        """
+        Add a file to the staging directory
+        Args:
+            arguments (List[str]): List of arguments from CLI
+        """
+
+        for file_name in file_list:
+            if file_name not in os.listdir("local"):
+                print(f"File {file_name} does not exist")
+                return
+
+        self.staging_file.append(file_name)
+        print(f"File {file_name} added to the staging area")
+
+    def commit(self, metafile: Metafile) -> None:
+        """
+        Publish the metafile to the tracker
+        Args:
+            metafile (Metafile): Metafile object to publish
+        """
+        self.tracker_socket.send(
+            f"PUBLISH {metafile.file_name} {metafile.full_bytes_size} {metafile.curr_bytes_size}".encode()
+        )
 
     def node_command_shell(self) -> None:
         """
@@ -77,11 +123,8 @@ class Node:
                 continue
 
             match cmd_parts[0]:
-                case "tracker_info":
-                    print(
-                        f"Tracker Information:\n - ip_address: {self.tracker_host}\n - ip_port: {self.tracker_port}"
-                    )
-                case "publish":
+                case "add":
+
                     break
                 case "exit":
                     break
