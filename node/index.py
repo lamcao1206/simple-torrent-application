@@ -1,6 +1,6 @@
 import socket
-import yaml
-from threading import Thread
+from threading import Thread, Lock
+from typing import Tuple
 import sys
 import os
 import argparse
@@ -20,10 +20,21 @@ class Node:
             target=self.tracker_listening, daemon=True
         )
 
-    def handshake(self):
+    def start(self) -> None:
         """
-        Performs initial handshake with the tracker by sending "First Connection" message
-        and waiting for acknowledgment
+        Start the Node step-by-step:
+         - Handshake with tracker
+         - Start tracker listening thread for receiving messages from tracker
+         - Start the Node command shell loop (main process) for interacting with CLI
+        """
+        self.handshake()
+        self.tracker_listening_thread.start()
+        self.node_command_shell()
+
+    def handshake(self) -> None:
+        """
+        This function performs initial handshake with the tracker by sending "First Connection" message
+        and waiting for acknowledgment from tracker
         """
         self.tracker_socket.connect((self.tracker_host, self.tracker_port))
         self.tracker_socket.send("First Connection".encode())
@@ -33,7 +44,10 @@ class Node:
         else:
             raise ConnectionError("Unexpected response from tracker")
 
-    def tracker_listening(self):
+    def tracker_listening(self) -> None:
+        """
+        Run a loop for receiving messages from tracker and handle them
+        """
         while True:
             try:
                 data = self.tracker_socket.recv(1024).decode()
@@ -50,16 +64,10 @@ class Node:
                 continue
             print("Received from tracker: ", data)
 
-    def start(self):
-        self.handshake()
-        self.tracker_listening_thread.start()
-        self.node_command_shell()
-
-    def close(self):
-        self.tracker_socket.close()
-        os._exit(0)
-
     def node_command_shell(self) -> None:
+        """
+        Command shell loop for interacting with Node CLI
+        """
         while True:
             sock_name, sock_port = self.tracker_socket.getsockname()
             cmd_input = input(f"{sock_name}:{sock_port} ~ ")
@@ -73,16 +81,33 @@ class Node:
                     print(
                         f"Tracker Information:\n - ip_address: {self.tracker_host}\n - ip_port: {self.tracker_port}"
                     )
+                case "publish":
+                    break
                 case "exit":
                     break
                 case _:
                     print("Unknown command")
 
     def ping_response(self):
+        """
+        Send a response to tracker for "ping" message
+        """
         self.tracker_socket.sendall(b"Alive")
 
+    def close(self):
+        """
+        Close the Node
+        """
+        self.tracker_socket.close()
+        os._exit(0)
 
-def cli_parser():
+
+def cli_parser() -> Tuple[str, int]:
+    """
+    Parse command line arguments for the Node CLI
+    Returns:
+        Tuple[str, int]: Tracker's IP address and port number
+    """
     parser = argparse.ArgumentParser(
         prog="Node", description="Init the Node for file system"
     )
@@ -101,7 +126,7 @@ def cli_parser():
     return (args.host, args.port)
 
 
-def main():
+def main() -> None:
     host, port = cli_parser()
     node = Node(host, port)
     try:
