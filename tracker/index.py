@@ -1,7 +1,8 @@
 import socket
-from threading import Thread
+from threading import Thread, Lock
 from typing import Dict
 import argparse
+import time
 
 
 class Peer:
@@ -14,11 +15,12 @@ class Peer:
         self.ip_address = ip_address
         self.peer_socket = peer_socket
         self.peer_thread = peer_thread
-        self.magnet_text = ""
+        self.lock = Lock()
 
     def close(self):
         try:
-            self.peer_socket.close()
+            with self.lock:
+                self.peer_socket.close()
         except Exception as e:
             print(f"Error closing peer connection: {repr(e)}")
 
@@ -42,6 +44,7 @@ class Tracker:
         while self.running:
             try:
                 node_socket, node_addr = self.sock.accept()
+                node_socket.settimeout(5)
             except Exception as e:
                 return
 
@@ -71,25 +74,57 @@ class Tracker:
         self.running = False
         self.sock.close()
         for peer in self.peers.values():
-            peer.peer_socket.send(b"tracker close")
+            with peer.lock:
+                try:
+                    peer.peer_socket.send(b"tracker close")
+                except Exception:
+                    pass
             peer.close()
 
     def handle_node(self, node_socket: socket.socket, node_addr: str) -> None:
         """Handles communication with a single node."""
         while self.running:
             try:
-                data = node_socket.recv(1024).decode()
+                with self.peers[node_addr].lock:
+                    data = node_socket.recv(1024).decode()
                 if not data:
                     self.remove_peer(node_addr)
                     continue
             except Exception as e:
                 break
             print(f"Received data from {node_addr}: {data}")
-            node_socket.send(b"Received data!")
+            with self.peers[node_addr].lock:
+                node_socket.send(b"Received data!")
 
     def remove_peer(self, peer_addr: str) -> None:
         self.peers[peer_addr].close()
         self.peers.pop(peer_addr)
+
+    def ping(self, IP: str, port: int) -> None:
+        node_addr = (IP, port)
+
+        if node_addr in self.peers.keys():
+            peer = self.peers[node_addr]
+            try:
+                with peer.lock:
+                    peer.peer_socket.settimeout(2)
+                    peer.peer_socket.send(b"PING")
+                    start_time = time.time()
+                    response = peer.peer_socket.recv(1024)
+                    end_time = time.time()
+
+                    latency = end_time - start_time
+                    print(
+                        f"Received from {node_addr}: {response.decode()} in {latency:.5f} seconds"
+                    )
+            except socket.timeout:
+                print(f"Ping to {node_addr} timed out")
+            except Exception as e:
+                print(f"Failed to ping {node_addr}: {repr(e)}")
+            finally:
+                peer.peer_socket.settimeout(None)
+        else:
+            print(f"Node {node_addr} is offline")
 
     def tracker_command_shell(self) -> None:
         while True:
@@ -105,14 +140,13 @@ class Tracker:
                     for addr in self.peers:
                         print(f" - {addr}")
                 case "ping":
-
-                    for addr, peer in self.peers.items():
-                        try:
-                            peer.peer_socket.send(b"PING")
-                            response = peer.peer_socket.recv(1024)
-                            print(f"Received from {addr}: {response.decode()}")
-                        except Exception as e:
-                            print(f"Failed to ping {addr}: {repr(e)}")
+                    try:
+                        IP, port = cmd_parts[1].split(":")
+                        self.ping(IP, int(port))
+                    except IndexError:
+                        print("Usage: ping <IP>:<port>")
+                    except ValueError:
+                        print("Invalid IP or port format.")
                 case "list":
                     for index, peer_addr in enumerate(self.peers.keys()):
                         print(f"- [{index}] {str(peer_addr)}")

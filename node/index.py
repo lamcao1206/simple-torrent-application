@@ -47,6 +47,7 @@ class Node:
 
             if data == "PING":
                 self.ping_response()
+                continue
             print("Received from tracker: ", data)
 
     def start(self):
@@ -78,7 +79,7 @@ class Node:
                     print("Unknown command")
 
     def ping_response(self):
-        self.tracker_socket.sendall(b"alive")
+        self.tracker_socket.sendall(b"Alive")
 
 
 def cli_parser():
