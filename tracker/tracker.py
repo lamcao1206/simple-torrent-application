@@ -8,10 +8,10 @@ BUFFER_SIZE = 1024
 REQUEST_TIMEOUT = 5
 
 """
-    ping 127.0.0.1:50082
-    investigate 127.0.0.1:50082
-    list
-    exit
+    ping 127.0.0.1:50082 OK
+    investigate 127.0.0.1:50082 OK 
+    list OK
+    exit OK
 """
 
 
@@ -21,12 +21,15 @@ class Peer:
         ip_address: str = None,
         peer_socket: socket.socket = None,
         peer_thread: Thread = None,
+        files: list[str] = None,
+        upload_address: str = None,
     ) -> None:
         self.ip_address = ip_address
         self.upload_address = None
         self.peer_socket = peer_socket
         self.peer_thread = peer_thread
-        self.files = None
+        self.files = files
+        self.upload_address = upload_address
         self.lock = Lock()
 
     def close(self):
@@ -38,15 +41,17 @@ class Peer:
 
 
 class Tracker:
-    def __init__(self, host="127.0.0.1", port=8000, max_nodes=10) -> None:
+    def __init__(
+        self, host: str = "127.0.0.1", port: int = 8000, max_nodes: int = 10
+    ) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((host, port))
         self.sock.listen(max_nodes)
 
-        self.running = True
+        self.running: bool = True
         self.peers: Dict[str, Peer] = {}
-        self.node_serving_thread = Thread(target=self.node_serve, daemon=True)
+        self.node_serving_thread: Thread = Thread(target=self.node_serve, daemon=True)
 
     def start(self) -> None:
         """
@@ -68,7 +73,7 @@ class Tracker:
             except Exception as e:
                 return
 
-            data = node_socket.recv(BUFFER_SIZE).decode()
+            data: str = node_socket.recv(BUFFER_SIZE).decode()
 
             if not data:
                 print(f"Connection closed by {node_addr}")
@@ -77,8 +82,8 @@ class Tracker:
 
             # Handle handshake from node
             if data == "First Connection":
-                peer_thread = Thread(
-                    target=self.handle_node,
+                peer_thread: Thread = Thread(
+                    target=self.handle_node_request,
                     args=[node_socket, node_addr],
                     daemon=True,
                 )
@@ -90,25 +95,24 @@ class Tracker:
                 peer_thread.start()
                 node_socket.send(b"ACK")
 
-    def handle_node(self, node_socket: socket.socket, node_addr: str) -> None:
+    def handle_node_request(self, node_socket: socket.socket, node_addr: str) -> None:
         """Handles communication with a single node."""
         while self.running:
             try:
                 with self.peers[node_addr].lock:
                     data = node_socket.recv(BUFFER_SIZE).decode()
-                if not data:
-                    self.remove_peer(node_addr)
-                    continue
+                    if not data:
+                        self.remove_peer(node_addr)
+                        continue
             except Exception as e:
                 break
-            print(f"Received data from {node_addr}: {data}")
             with self.peers[node_addr].lock:
                 node_socket.send(b"Received data!")
 
     def fetch_response(self, node_addr: str, file_names: list[str]) -> str:
         pass
 
-    def push_response(self, node_addr: str, staging_file_name: str) -> str:
+    def push_response(self, node_addr: str, staging_file_name: list[str]) -> str:
         pass
 
     def remove_peer(self, peer_addr: str) -> None:
@@ -183,7 +187,7 @@ class Tracker:
 
     def list_command_shell(self) -> None:
         """
-        List all the connected peers
+        List all the connected peers information
         """
         for index, peer_addr in enumerate(self.peers.keys()):
             print(f"- [{index}] {str(peer_addr)}")
@@ -194,23 +198,23 @@ class Tracker:
         """
         while True:
             sock_name, sock_port = self.sock.getsockname()
-            cmd_input = input(f"{sock_name}:{sock_port} ~ ")
+            cmd_input = input(f"\n{sock_name}:{sock_port} ~ ")
             cmd_parts = cmd_input.split()
             if not cmd_parts:
                 continue
 
-            match cmd_parts[1]:
-                case "--ping":
+            match cmd_parts[0]:
+                case "ping":
                     try:
-                        IP, port = cmd_parts[2].split(":")
+                        IP, port = cmd_parts[1].split(":")
                         self.ping_command_shell(IP, int(port))
                     except IndexError:
                         print("Usage: transmission-cli --ping <IP>:<port>")
                     except ValueError:
                         print("Invalid IP or port format.")
-                case "--l":
-                    self.list_all_command_shell()
-                case "--i":
+                case "list":
+                    self.list_command_shell()
+                case "investigate":
                     try:
                         IP, port = cmd_parts[2].split(":")
                         self.investigate_command_shell(IP, int(port))
@@ -218,7 +222,7 @@ class Tracker:
                         print("Usage: transmission-cli --i <IP>:<port>")
                     except ValueError:
                         print("Invalid IP or port format.")
-                case "--exit":
+                case "exit":
                     break
                 case _:
                     print("Unknown command")
@@ -271,6 +275,8 @@ def main() -> None:
         tracker.start()
     except KeyboardInterrupt:
         print("\n[Exception]: Got Interrupt by Ctrl + C")
+    except Exception as e:
+        print(f"\n[Exception]: {e}")
     finally:
         tracker.close()
 

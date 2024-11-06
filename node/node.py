@@ -1,9 +1,10 @@
 import socket
-from threading import Thread, Lock
+from threading import Thread
 from typing import Tuple
 import sys
 import os
 import argparse
+import shutil
 
 """
 	add file1.txt file2.txt file3.txt 
@@ -37,7 +38,6 @@ class Node:
         self.tracker_listening_thread = Thread(
             target=self.tracker_listening, daemon=True
         )
-        self.staging_file = []  # List of files to be staged for publishing
 
     def start(self) -> None:
         """
@@ -85,30 +85,51 @@ class Node:
             else:
                 raise RuntimeError("Unknown message from tracker")
 
-    def add(self, file_list) -> None:
+    def add(self, file_list: list[str]) -> None:
         """
-        Add a file to the staging directory
+        Add files from local to staging to the staging directory
+
         Args:
-            arguments (List[str]): List of arguments from CLI
+            file_list (List[str]): List of filename from CLI
         """
 
         for file_name in file_list:
             if file_name not in os.listdir("local"):
-                print(f"File {file_name} does not exist")
+                print(f"[Error]: File {file_name} does not exist")
                 return
 
-        self.staging_file.append(file_name)
-        print(f"File {file_name} added to the staging area")
+        for file_name in file_list:
+            if file_name in os.listdir("staging"):
+                print(f"[Warning]: {file_name} already exists in staging folder")
+                file_list.remove(file_name)
 
-    def commit(self, metafile: Metafile) -> None:
+        for file_name in file_list:
+            shutil.copy(f"local/{file_name}", "staging")
+
+    def remove(self, file_list: list[str]) -> None:
         """
-        Publish the metafile to the tracker
+        Remove specific files from staging
+
+        Args:
+            file_list (list[str]): List of filenames
+        """
+        for file_name in file_list:
+            if file_name not in os.listdir("staging"):
+                print(f"[Warning]: {file_name} not exists in staging folder")
+            else:
+                os.remove(f"staging/{file_name}")
+
+    def push(self) -> None:
+        """
+        Publish the metafile info to the tracker
         Args:
             metafile (Metafile): Metafile object to publish
         """
-        self.tracker_socket.send(
-            f"PUBLISH {metafile.file_name} {metafile.full_bytes_size} {metafile.curr_bytes_size}".encode()
-        )
+        staging_file_names = os.listdir("staging")
+        self.tracker_socket.sendall(f"push {staging_file_names}".encode())
+
+    def tracker_scrape(self) -> None:
+        pass
 
     def node_command_shell(self) -> None:
         """
@@ -124,7 +145,12 @@ class Node:
 
             match cmd_parts[0]:
                 case "add":
-
+                    self.add(cmd_parts[1:])
+                case "remove":
+                    self.remove(cmd_parts[1:])
+                case "push":
+                    self.push()
+                case "tracker-scape":
                     break
                 case "exit":
                     break
