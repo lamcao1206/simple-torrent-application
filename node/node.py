@@ -1,32 +1,30 @@
 import socket
 from threading import Thread
-from typing import Tuple
+from typing import Tuple, List
 import sys
 import os
 import argparse
 import shutil
 
-"""
-	add file1.txt file2.txt file3.txt 
-	remove file1.txt file2.txt file3.txt 
-	log 
-	push 
-	fetch
-	exit
-"""
 
-
-class Metafile:
+class Piece:
     def __init__(
-        self, file_name: str, full_bytes_size: int, curr_bytes_size: int
+        self, piece_id: int, original_filename: str, piece_data: bytes
     ) -> None:
-        self.file_name = file_name
-        self.full_bytes_size = full_bytes_size
-        self.curr_bytes_size = curr_bytes_size
+        """
+        Represent the piece of a file in the staging directory
+
+        Args:
+            piece_id (int): Piece id
+            original_filename (str): Original filename of the piece
+        """
+        self.piece_id = piece_id
+        self.original_filename = original_filename
+        self.piece_name = f"{self.original_filename}_{self.piece_id}"
 
 
 class Node:
-    def __init__(self, tracker_host="127.0.0.1", tracker_port=8000) -> None:
+    def __init__(self, tracker_host: str = "127.0.0.1", tracker_port=8000) -> None:
         """
         Args:
             tracker_host (str): Hostname of tracker
@@ -38,6 +36,7 @@ class Node:
         self.tracker_listening_thread = Thread(
             target=self.tracker_listening, daemon=True
         )
+        self.files: List[Piece] = []
 
     def start(self) -> None:
         """
@@ -129,6 +128,7 @@ class Node:
         self.tracker_socket.sendall(f"push {staging_file_names}".encode())
 
     def tracker_scrape(self) -> None:
+        self.tracker_socket.send("TRACKER SCRAPE")
         pass
 
     def node_command_shell(self) -> None:
@@ -176,6 +176,10 @@ class Node:
         """
         self.tracker_socket.close()
         os._exit(0)
+
+
+def magnet_link(file_name: str, file_size: int) -> str:
+    pass
 
 
 def cli_parser() -> Tuple[str, int]:

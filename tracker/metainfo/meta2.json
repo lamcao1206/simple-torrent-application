@@ -1,0 +1,10 @@
+{
+	"tracker_ip": "127.0.0.1:8000",
+	"0.txt": {
+		"file_name": "test.txt",
+		"file_size": 1000,
+		"piece_size": 100,
+		"piece_count": 10,
+		"nodes": ["127.0.0.1:8001", "127.0.01:8002"],
+	}, 
+}

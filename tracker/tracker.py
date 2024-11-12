@@ -15,6 +15,10 @@ REQUEST_TIMEOUT = 5
 """
 
 
+class Metainfo:
+    pass
+
+
 class Peer:
     def __init__(
         self,
@@ -23,6 +27,7 @@ class Peer:
         peer_thread: Thread = None,
         files: list[str] = None,
         upload_address: str = None,
+        metainfo: Metainfo = None,
     ) -> None:
         self.ip_address = ip_address
         self.upload_address = None
@@ -104,6 +109,7 @@ class Tracker:
                     if not data:
                         self.remove_peer(node_addr)
                         continue
+
             except Exception as e:
                 break
             with self.peers[node_addr].lock:
@@ -209,7 +215,7 @@ class Tracker:
                         IP, port = cmd_parts[1].split(":")
                         self.ping_command_shell(IP, int(port))
                     except IndexError:
-                        print("Usage: transmission-cli --ping <IP>:<port>")
+                        print("Usage: ping <IP>:<port>")
                     except ValueError:
                         print("Invalid IP or port format.")
                 case "list":
@@ -219,7 +225,7 @@ class Tracker:
                         IP, port = cmd_parts[2].split(":")
                         self.investigate_command_shell(IP, int(port))
                     except IndexError:
-                        print("Usage: transmission-cli --i <IP>:<port>")
+                        print("Usage: investigate <IP>:<port>")
                     except ValueError:
                         print("Invalid IP or port format.")
                 case "exit":
@@ -235,6 +241,10 @@ class Tracker:
         self.sock.close()
         for peer in self.peers.values():
             peer.close()
+
+
+def parser_magnet_link(file_name: str, file_size: int) -> str:
+    pass
 
 
 def cli_parser() -> Tuple[str, int, int]:
