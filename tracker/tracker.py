@@ -3,16 +3,11 @@ from threading import Thread, Lock
 from typing import Dict, Tuple
 import argparse
 import time
+import json
+import random
 
 BUFFER_SIZE = 1024
 REQUEST_TIMEOUT = 5
-
-"""
-    ping 127.0.0.1:50082 OK
-    investigate 127.0.0.1:50082 OK 
-    list OK
-    exit OK
-"""
 
 
 class Metainfo:
@@ -25,16 +20,19 @@ class Peer:
         ip_address: str = None,
         peer_socket: socket.socket = None,
         peer_thread: Thread = None,
-        files: list[str] = None,
         upload_address: str = None,
-        metainfo: Metainfo = None,
+        peer_listening_port: int = None,
+        peer_upload_port: int = None,
+        file_info: Dict[str, int] = None,
     ) -> None:
         self.ip_address = ip_address
         self.upload_address = None
         self.peer_socket = peer_socket
         self.peer_thread = peer_thread
-        self.files = files
+        self.file_info = file_info
         self.upload_address = upload_address
+        self.peer_listening_port = peer_listening_port
+        self.peer_upload_port = peer_upload_port
         self.lock = Lock()
 
     def close(self):
@@ -59,18 +57,10 @@ class Tracker:
         self.node_serving_thread: Thread = Thread(target=self.node_serve, daemon=True)
 
     def start(self) -> None:
-        """
-        Starts the node-serving thread for interacting with nodes requests
-        and start the tracker command shell loop (main process) for interacting with CLI
-        """
         self.node_serving_thread.start()
         self.tracker_command_shell()
 
     def node_serve(self) -> None:
-        """
-        Run a loop for accepting incoming connections from nodes
-        and handle them.
-        """
         while self.running:
             try:
                 node_socket, node_addr = self.sock.accept()
@@ -87,21 +77,30 @@ class Tracker:
 
             # Handle handshake from node
             if data == "First Connection":
+                node_socket.send(b"ACK")
+                # Get peer specific info
+                peer_info: list[str] = (
+                    node_socket.recv(BUFFER_SIZE).decode().split(" ", 2)
+                )
+
+                print(f"Received file info from {node_addr}: {peer_info}")
                 peer_thread: Thread = Thread(
                     target=self.handle_node_request,
                     args=[node_socket, node_addr],
                     daemon=True,
                 )
+
                 self.peers[node_addr] = Peer(
                     ip_address=node_addr,
                     peer_socket=node_socket,
                     peer_thread=peer_thread,
+                    peer_listening_port=int(peer_info[0]),
+                    peer_upload_port=int(peer_info[1]),
+                    file_info=json.loads(peer_info[2]),
                 )
                 peer_thread.start()
-                node_socket.send(b"ACK")
 
     def handle_node_request(self, node_socket: socket.socket, node_addr: str) -> None:
-        """Handles communication with a single node."""
         while self.running:
             try:
                 with self.peers[node_addr].lock:
@@ -115,31 +114,11 @@ class Tracker:
             with self.peers[node_addr].lock:
                 node_socket.send(b"Received data!")
 
-    def fetch_response(self, node_addr: str, file_names: list[str]) -> str:
-        pass
-
-    def push_response(self, node_addr: str, staging_file_name: list[str]) -> str:
-        pass
-
     def remove_peer(self, peer_addr: str) -> None:
-        """
-        Remove a peer with peer_addr from the dictionary of connected peers (self.peers)
-
-        Args:
-            peer_addr (str): peer address of the peer to remove in form (IP, port)
-        """
         self.peers[peer_addr].close()
         self.peers.pop(peer_addr)
 
     def ping_command_shell(self, IP: str, port: int) -> None:
-        """
-        Send a ping message to the peer at IP:Port and
-        measure the latency of the response
-
-        Args:
-            IP (str): IP address
-            port (int): port number
-        """
         node_addr = (IP, port)
         if node_addr in self.peers.keys():
             peer = self.peers[node_addr]
@@ -165,13 +144,6 @@ class Tracker:
             print(f"Node {node_addr} is offline")
 
     def investigate_command_shell(self, IP: str, port: int) -> None:
-        """
-        Investigate the node at IP:Port for its local files' information
-
-        Args:
-            IP (str): IP address
-            port (int): port number
-        """
         node_addr = (IP, port)
         if node_addr in self.peers.keys():
             peer = self.peers[node_addr]
@@ -192,16 +164,10 @@ class Tracker:
             print(f"Node {node_addr} is offline")
 
     def list_command_shell(self) -> None:
-        """
-        List all the connected peers information
-        """
         for index, peer_addr in enumerate(self.peers.keys()):
             print(f"- [{index}] {str(peer_addr)}")
 
     def tracker_command_shell(self) -> None:
-        """
-        Command shell loop for the tracker CLI
-        """
         while True:
             sock_name, sock_port = self.sock.getsockname()
             cmd_input = input(f"\n{sock_name}:{sock_port} ~ ")
@@ -234,26 +200,13 @@ class Tracker:
                     print("Unknown command")
 
     def close(self) -> None:
-        """
-        Close the tracker and all the peer
-        """
         self.running = False
         self.sock.close()
         for peer in self.peers.values():
             peer.close()
 
 
-def parser_magnet_link(file_name: str, file_size: int) -> str:
-    pass
-
-
 def cli_parser() -> Tuple[str, int, int]:
-    """
-    Parse the command line argumenst for the Tracker CLI
-
-    Returns:
-        Tuple[str, int, int]: Tracker's IP address, port number and maximum number of nodes connected to tracker
-    """
     parser = argparse.ArgumentParser(
         prog="Tracker", description="Init the tracker for file system"
     )
@@ -276,6 +229,15 @@ def cli_parser() -> Tuple[str, int, int]:
     )
     args = parser.parse_args()
     return (args.host, args.port, args.max_nodes)
+
+
+class TrackerUtil:
+    @staticmethod
+    def update_metainfo(file_info: Dict[str, int]) -> bool:
+        # Update metainfo to by in sync with file_info data
+        random_bit = random.choice([0, 1])
+        print(random_bit)
+        pass
 
 
 def main() -> None:
