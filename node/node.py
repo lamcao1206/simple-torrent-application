@@ -1,43 +1,35 @@
-import socket
-from threading import Thread
+from utils import NodeUtils
+from piece import Piece
+from threading import Thread, Lock
 from typing import Tuple, List, Dict
+import socket
 import sys
 import os
-import argparse
-import shutil
-import mmap
-import math
-import json
 import traceback
+import mmap
+import time
 
-STAGING_FOLDER = "staging"
+REPO_FOLDER = "repo"
+LOCAL_FOLDER = "local"
 PIECE_SIZE = 512 * 1024
-
-
-class Piece:
-    def __init__(
-        self, piece_id: int, original_filename: str, start_index: int, end_index: int
-    ) -> None:
-        self.piece_id = piece_id
-        self.original_filename = original_filename
-        self.piece_name = f"{self.original_filename}_{self.piece_id}"
-        self.start_index = start_index
-        self.end_index = end_index
-
-    def __str__(self) -> None:
-        return f"Piece ID: {self.piece_id}, Filename: {self.original_filename}, Piecename: {self.piece_name}, Start Index: {self.start_index}, End Index: {self.end_index}"
+REQUEST_TIMEOUT = 5
 
 
 class Node:
     def __init__(
         self, tracker_host="127.0.0.1", tracker_port=8000, upload_IP="127.0.0.1"
     ) -> None:
-        self.tracker_host = tracker_host
-        self.tracker_port = tracker_port
+
+        # socket for communicate with tracker
         self.tracker_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # socket for listening upload requests
         self.upload_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.upload_socket.bind((upload_IP, 0))
         self.upload_socket.listen(10)
+
+        # Server info
+        self.tracker_host = tracker_host
+        self.tracker_port = tracker_port
 
         # Thread for communicate with tracker
         self.tracker_listening_thread = Thread(
@@ -47,6 +39,9 @@ class Node:
         # Pieces Info
         self.pieces: List[Piece] = []
 
+        # Lock
+        self.lock = Lock()
+
     def start(self) -> None:
         self.setup()
         self.handshake()
@@ -55,39 +50,29 @@ class Node:
 
     def setup(self) -> None:
         # Make neccessary dirs
-        directories = ["local", "staging", "temp"]
+        directories = ["local", "repo", "temp"]
         for directory in directories:
             os.makedirs(directory, exist_ok=True)
 
-        # Clean the temp directories
-        temp_dir = "temp"
-        for filename in os.listdir(temp_dir):
-            os.remove(f"{temp_dir}/{filename}")
-
-        # Parser the staging folder to generate self.pieces
-        self.pieces = NodeUtils.generate_pieces_staging_files(
-            folder_name=STAGING_FOLDER, piece_size=PIECE_SIZE
+        self.pieces = NodeUtils.generate_pieces_from_repo_files(
+            folder_name=REPO_FOLDER, piece_size=PIECE_SIZE
         )
-
-        for piece in self.pieces:
-            print(piece)
 
     def handshake(self) -> None:
         self.tracker_socket.connect((self.tracker_host, self.tracker_port))
+        time.sleep(0.1)
         self.tracker_socket.send("First Connection".encode())
-        ack = self.tracker_socket.recv(1024).decode()
-        if ack == "ACK":
-            print("Tracker acknowledge the connection.")
-        else:
-            raise ConnectionError("Unexpected response from tracker")
 
         # Generate the file info
-        file_info: str = NodeUtils.generate_files_info(folder_name=STAGING_FOLDER)
-        print(file_info)
+        file_info: str = NodeUtils.generate_files_info_from(folder_name=REPO_FOLDER)
 
         # Tell the tracker info of original socket and tracker socket and its file info
         node_info = (
-            str(self.tracker_socket.getsockname()[1])
+            self.tracker_socket.getsockname()[0]  # IP address
+            + " "
+            + str(self.tracker_socket.getsockname()[1])  # Port
+            + " "
+            + self.upload_socket.getsockname()[0]
             + " "
             + str(self.upload_socket.getsockname()[1])
             + " "
@@ -95,54 +80,95 @@ class Node:
         )
 
         self.tracker_socket.sendall(node_info.encode())
+        print(
+            "Communicate Address: "
+            + self.tracker_socket.getsockname()[0]
+            + " "
+            + str(self.tracker_socket.getsockname()[1])
+        )
+
+        print(
+            "Upload Address: "
+            + self.upload_socket.getsockname()[0]
+            + " "
+            + str(self.upload_socket.getsockname()[1])
+        )
 
     def tracker_listening(self) -> None:
         while True:
+            data = ""
             try:
-                data = self.tracker_socket.recv(1024).decode()
+                with self.lock:
+                    data = self.tracker_socket.recv(1024).decode()
             except Exception as e:
-                return
+                continue
 
-            if data == "tracker close":
+            if len(data) == 0:
+                continue
+            elif data == "tracker close":
                 print("\nTracker closed!")
                 self.close()
                 sys.exit(0)
-
-            if data == "PING":
+            elif data == "PING":
                 self.ping_response()
-            elif data == "INVESTIGATE":
-                self.investigate_response()
-            else:
-                raise RuntimeError("Unknown message from tracker")
 
-    def add(self, file_list: list[str]) -> None:
-        for file_name in file_list:
-            if file_name not in os.listdir("local"):
+    def add(self, file_list_request: list[str], src_fold: str, dest_fold: str) -> None:
+        # Check for unexists file in src folder
+        for file_name in file_list_request:
+            if file_name not in os.listdir(src_fold):
                 print(f"[Error]: File {file_name} does not exist")
                 return
 
-        for file_name in file_list:
-            if file_name in os.listdir("staging"):
-                print(f"[Warning]: {file_name} already exists in staging folder")
-                file_list.remove(file_name)
+        # Check for existing file in dest folder
+        for file_name in file_list_request:
+            if file_name in os.listdir(dest_fold):
+                print(f"[Warning]: {file_name} already exists in repo folder")
+                file_list_request.remove(file_name)
 
-        for file_name in file_list:
-            shutil.copy(f"local/{file_name}", "staging")
+        for file_name in file_list_request:
+            src_path = os.path.join(src_fold, file_name)
+            dest_path = os.path.join(dest_fold, file_name)
+            with open(src_path, "rb") as src_file, open(dest_path, "wb") as dest_file:
+                # Memory-map the src file to move to dest file
+                mmap_obj = mmap.mmap(
+                    src_file.fileno(), length=0, access=mmap.ACCESS_READ
+                )
+                dest_file.write(mmap_obj)
+                mmap_obj.close()
+        if len(file_list_request) != 0:
+            print("Add files to repo OK!")
 
-    def remove(self, file_list: list[str]) -> None:
-        for file_name in file_list:
-            if file_name not in os.listdir("staging"):
-                print(f"[Warning]: {file_name} not exists in staging folder")
+    def remove(self, file_list_request: list[str]) -> None:
+        for file_name in file_list_request:
+            if file_name not in os.listdir(REPO_FOLDER):
+                print(f"[Warning]: {file_name} not exists in repo folder")
+                return
             else:
-                os.remove(f"staging/{file_name}")
+                os.remove(f"{REPO_FOLDER}/{file_name}")
+                for piece in self.pieces:
+                    if piece.original_filename == file_name:
+                        self.pieces.remove(piece)
+        print("Remove files from repo OK!")
 
-    def push(self) -> None:
-        staging_file_names = os.listdir("staging")
-        self.tracker_socket.sendall(f"push {staging_file_names}".encode())
-
-    def tracker_scrape(self) -> None:
-        self.tracker_socket.send("TRACKER SCRAPE")
+    def publish(self, file_names: str) -> None:
         pass
+
+    def fetch(self, message: str) -> None:
+        def fetch_async():
+            try:
+                # Acquire lock to safely access the tracker socket
+                with self.lock:
+                    self.tracker_socket.sendall(message.encode())
+                    data = self.tracker_socket.recv(1024).decode()
+                    print(f"[Tracker Response]: {data}")
+            except socket.error as e:
+                print(f"[Error]: Socket communication failed: {e}")
+            except Exception as e:
+                print(f"[Error]: Unexpected error during fetch: {e}")
+
+        fetch_thread = Thread(target=fetch_async, daemon=True)
+        fetch_thread.start()
+        time.sleep(1)
 
     def node_command_shell(self) -> None:
         while True:
@@ -155,103 +181,54 @@ class Node:
 
             match cmd_parts[0]:
                 case "add":
-                    self.add(cmd_parts[1:])
+                    self.add(
+                        cmd_parts[1:], src_fold=LOCAL_FOLDER, dest_fold=REPO_FOLDER
+                    )
                 case "remove":
                     self.remove(cmd_parts[1:])
-                case "push":
-                    self.push()
-                case "tracker-scape":
-                    break
+                case "piece":
+                    for piece in self.pieces:
+                        print(piece)
+                case "publish":
+                    print(cmd_input)
+                case "fetch":
+                    self.fetch(cmd_input)
+                    pass
                 case "exit":
                     break
                 case _:
                     print("Unknown command")
 
     def ping_response(self) -> None:
-        self.tracker_socket.sendall(b"Alive")
+        self.tracker_socket.sendall(b"alive")
 
-    def investigate_response(self):
-        dir_list = os.listdir("staging")
-        self.tracker_socket.sendall(" ".join(dir_list).encode())
+    def close_sockets(self):
+        self.tracker_socket.close()
+        self.upload_socket.close()
 
     def close(self):
-        self.tracker_socket.close()
-        os._exit(0)
-
-
-def cli_parser() -> Tuple[str, int]:
-    parser = argparse.ArgumentParser(
-        prog="Node", description="Init the Node for file system"
-    )
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Hostname of the tracker (default: 127.0.0.1)",
-    )
-    parser.add_argument(
-        "--port",
-        default=8000,
-        type=int,
-        help="Port number of the tracker (default: 8000)",
-    )
-    args = parser.parse_args()
-    return (args.host, args.port)
-
-
-class NodeUtils:
-    @staticmethod
-    def generate_pieces_staging_files(folder_name: str, piece_size: int) -> List[Piece]:
-        file_names = os.listdir(folder_name)
-        pieces = []
-        for file_name in file_names:
-            piece_id = 0
-            file_path = os.path.join(STAGING_FOLDER, file_name)
-            with open(file_path, "r+b") as file:
-                mmap_obj = mmap.mmap(file.fileno(), length=0, access=mmap.ACCESS_READ)
-                while True:
-                    start_index = piece_id * PIECE_SIZE
-                    end_index = start_index + PIECE_SIZE
-                    piece_sliding_window = mmap_obj[start_index:end_index]
-                    # End sliding window
-                    if not piece_sliding_window:
-                        break
-                    # Create a new Piece object
-                    piece = Piece(
-                        piece_id=piece_id,
-                        original_filename=os.path.basename(file_name).split(".")[0],
-                        start_index=start_index,
-                        end_index=end_index,
-                    )
-                    pieces.append(piece)
-                    piece_id += 1
-                mmap_obj.close()
-        return pieces
-
-    @staticmethod
-    def generate_files_info(folder_name: str) -> str:
-        file_info = {}
-        file_names = os.listdir(folder_name)
-        for file_name in file_names:
-            file_path = os.path.join(folder_name, file_name)
-            file_size = os.path.getsize(file_path)
-            piece_size = PIECE_SIZE
-            piece_count = math.ceil(file_size / piece_size)
-
-            file_info[file_name] = {
-                "file_size": file_size,
-                "piece_size": piece_size,
-                "piece_count": piece_count,
-            }
-        return json.dumps(file_info)
+        try:
+            self.tracker_socket.settimeout(REQUEST_TIMEOUT)
+            self.tracker_socket.sendall("close".encode())
+        except Exception as e:
+            print(f"[Error]: Failed to send close message to tracker: {e}")
+        finally:
+            self.close_sockets()
+            print("Node closed")
+            os._exit(0)
 
 
 def main() -> None:
-    host, port = cli_parser()
+    host, port = NodeUtils.cli_parser()
     node = Node(host, port)
     try:
         node.start()
+    except KeyboardInterrupt:
+        print("\n[Exception]: Interrupted by user")
+        node.close()
     except Exception as e:
-        print(traceback.format_exc())
+        print(f"\n[Exception]: {traceback.format_exc()}")
+        node.close()
     finally:
         node.close()
 
