@@ -1,0 +1,11 @@
+{
+	"tracker_ip": "127.0.0.1:8000",
+	"127.0.0.1:54699 (listening port)": {
+		"ip_addr": "127.0.0.1",
+		"upload_port ()": 54698 
+	}, 
+	"127.0.0.1:54690 (listening port)": {
+		"ip_addr": "127.0.0.1",
+		"upload_port ()": 54691 
+	}
+}

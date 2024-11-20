@@ -2,8 +2,8 @@ import mmap
 import random
 import string
 
-filename = "1MB.txt"
-size = 1024 * 1024  # 400KB in bytes
+filename = "30MB.txt"
+size = 30 * 1024 * 1024  # 400KB in bytes
 
 
 def generate_random_text(size: int) -> str:

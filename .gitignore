@@ -5,3 +5,7 @@ fetch.yaml
 .prettierignore
 
 __pycache__/
+pieces/
+helper/
+node1/
+temp/
