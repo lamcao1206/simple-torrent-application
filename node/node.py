@@ -1,5 +1,8 @@
-from threading import Thread
+# Author: Cao Ngoc Lam, Nguyen Chau Hoang Long
+# Date modified: Thursday 21st Nov 2024
+
 from typing import Tuple, List, Dict
+import threading
 import socket
 import os
 import traceback
@@ -8,18 +11,30 @@ import json
 import time
 import math
 import argparse
-from tqdm import tqdm
 from queue import Queue
+from tqdm import tqdm
+import multiprocessing
 
 
 REPO_FOLDER = "repo"
 LOCAL_FOLDER = "local"
 PIECES_FOLDER = "pieces"
+TEMP_FOLDER = "temp"
 PIECE_SIZE = 512 * 1024
 REQUEST_TIMEOUT = 5
 
 
 class Piece:
+    """
+    Represent an mapping info to real pieces in PIECES_FOLDER
+
+    Args:
+        - piece_id (int): Piece ID
+        - original_filename (str): Original filename that the pieces belong to
+        - start_index (int): Start index of the piece in byte array representation of file
+        - end_index (int): End index of the piece in byte array representation of file
+    """
+
     def __init__(
         self, piece_id: int, original_filename: str, start_index: int, end_index: int
     ):
@@ -33,10 +48,21 @@ class Piece:
 
 
 class Node:
-    def __init__(
-        self, tracker_host="127.0.0.1", tracker_port=8000, upload_IP="127.0.0.1"
-    ) -> None:
+    """
+    Represent a single Node in P2P network
 
+    Args:
+        - tracker_ip (str): IP Address of the tracker
+        - tracker_port (int): Port number of the tracker
+        - tracker_send_socket (socket.socket): Socket for sending message to tracker
+        - upload_socket (socket.socket): Socket for listening upload requests
+        - pieces (List[Piece]): List of pieces that the node has
+        - upload_listening_request_thread (threading.Thread): Thread for listening upload requests
+    """
+
+    def __init__(
+        self, tracker_ip="127.0.0.1", tracker_port=8000, upload_IP="127.0.0.1"
+    ) -> None:
         # socket for sending message to tracker
         self.tracker_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # socket for listening upload requests
@@ -45,42 +71,57 @@ class Node:
         self.upload_socket.listen(10)
 
         # Server info
-        self.tracker_host = tracker_host
+        self.tracker_ip = tracker_ip
         self.tracker_port = tracker_port
 
         # Pieces Info
         self.pieces: List[Piece] = []
 
         # Thread for listening upload requests
-        self.upload_listening_request_thread = Thread(
+        self.upload_listening_request_thread = threading.Thread(
             target=self.upload_listening_request,
             args=(self.upload_socket,),
             daemon=True,
         )
 
     def upload_listening_request(self, upload_socket: socket.socket) -> None:
+        """
+        Listen to the upload request connections from other nodes and create new threads to handle the them
+
+        Args:
+            - upload_socket (socket.socket): Socket for listening upload requests
+        """
         while True:
             try:
                 conn, addr = upload_socket.accept()
             except Exception as e:
                 break
-            upload_handler_thread = Thread(
-                target=self.upload_request_handler, args=(conn, addr), daemon=True
+            upload_handler_thread = threading.Thread(
+                target=self.upload_request_handler, args=(conn), daemon=True
             )
             upload_handler_thread.start()
 
-    def upload_request_handler(
-        self, conn: socket.socket, addr: Tuple[str, int]
-    ) -> None:
+    def upload_request_handler(self, conn: socket.socket) -> None:
+        """
+        Handle the upload request from corresponding node
+        Args:
+            conn (socket.socket): Socket connection
+            addr (Tuple[str, int]):
+        """
         with conn:
             msg = conn.recv(1024).decode()
-            print(msg)
             if msg.startswith("find"):
                 self.explore_pieces_request_handler(msg, conn)
             elif msg.startswith("request"):
                 self.transfer_pieces_request_handler(msg.split()[1], conn)
 
     def explore_pieces_request_handler(self, msg: str, conn: socket.socket) -> None:
+        """
+        Handle the explore pieces request from corresponding node
+        Args:
+            msg (str): message content
+            conn (socket.socket): Socket connection
+        """
         response = {}
         requested_files = msg.split()[1:]
         for file_name in requested_files:
@@ -92,7 +133,6 @@ class Node:
     def transfer_pieces_request_handler(
         self, piece_name: str, conn: socket.socket
     ) -> None:
-        # Transfer the requested piece to the requesting node
         piece_path = os.path.join(PIECES_FOLDER, piece_name)
         with open(piece_path, "rb") as piece_file:
             with mmap.mmap(
@@ -102,13 +142,15 @@ class Node:
                 conn.sendall(chunk)
 
     def start(self) -> None:
+        # Start the Node by setting up the environment, handshake with the tracker, and start the command shell
         self.setup()
         self.handshake()
         self.upload_listening_request_thread.start()
         self.node_command_shell()
 
     def setup(self) -> None:
-        directories = ["local", "repo", "temp"]
+        # Set up neccessary folders and generate pieces from repo files
+        directories = [LOCAL_FOLDER, REPO_FOLDER, TEMP_FOLDER, PIECES_FOLDER]
         for directory in directories:
             os.makedirs(directory, exist_ok=True)
 
@@ -117,7 +159,8 @@ class Node:
         )
 
     def handshake(self) -> None:
-        self.tracker_send_socket.connect((self.tracker_host, self.tracker_port))
+        # Handshake with the tracker by sending the first connection message and node information (files, pieces information) to tracker
+        self.tracker_send_socket.connect((self.tracker_ip, self.tracker_port))
         time.sleep(0.1)
         self.tracker_send_socket.send("First Connection".encode())
 
@@ -126,7 +169,7 @@ class Node:
         # (IP Address) (Port for sending) (Port for uploading) (File info)
 
         node_info = (
-            self.tracker_host
+            self.tracker_ip
             + " "
             + str(self.tracker_send_socket.getsockname()[1])
             + " "
@@ -187,14 +230,24 @@ class Node:
         print("Remove files from repo OK!")
 
     def fetch(self, message: str) -> None:
+        # Fetch the files by sending the request to the tracker and get the pieces information from the peers
         try:
             requested_files = message.split()[1:]
             self.tracker_send_socket.sendall(message.encode())
             data = self.tracker_send_socket.recv(1024).decode()
             data = json.loads(data)
-            print(data)
+            print("[Tracker Response]")
+            print(json.dumps(data, indent=4))
             # {'127.0.0.1:54782': {'ip_addr': '127.0.0.1', 'upload_port': 54781}, '127.0.0.1:54784': {'ip_addr': '127.0.0.1', 'upload_port': 54783}, 'tracker_ip': '127.0.0.1:8000'}
-            request_pieces_obj = {}
+            request_pieces_obj: Dict[Tuple[str, int], Dict[str, List[str]]] = {}
+            curr_pieces_info: Dict[str, List[str]] = {}
+            display = {}
+            request_queues: Dict[Tuple[str, int], List[str]] = {}
+            for piece in self.pieces:
+                curr_pieces_info.setdefault(piece.original_filename, []).append(
+                    f"{piece.piece_id}"
+                )
+
             for _, peer_info in data.items():
                 if (
                     isinstance(peer_info, dict)
@@ -206,9 +259,21 @@ class Node:
                     pieces_info = self.request_pieces_info_from(
                         ip_addr, upload_port, requested_files
                     )
+                    request_queues[(ip_addr, upload_port)] = []
+                    display[str((ip_addr, upload_port))] = []
                     request_pieces_obj[(ip_addr, upload_port)] = pieces_info
+            for file in requested_files:
+                file_request_queue = NodeUtils.get_request_queue(
+                    file, request_pieces_obj, curr_pieces_info
+                )
+                for peer, pieces in file_request_queue.items():
+                    display[str(peer)].extend(pieces)
+                    request_queues[peer].extend(pieces)
 
-            print(request_pieces_obj)
+            print("[Final Request Queues]")
+            print(json.dumps(display, indent=3))
+            print("Downloading...")
+            self.download_manager(request_queues)
         except Exception as e:
             print(f"[Error]: Unexpected error during fetch: {e}")
 
@@ -220,24 +285,76 @@ class Node:
             pieces_request_socket.connect((ip_addr, int(upload_port)))
             pieces_request_socket.sendall(f"find {' '.join(requested_files)}".encode())
             data = pieces_request_socket.recv(1024).decode()
-        return data
+        return json.loads(data)
+
+    def download_manager(
+        self, request_queues: Dict[Tuple[str, int], List[str]]
+    ) -> None:
+        progress_queue = Queue()
+        download_threads = []
+
+        for thread_id, (peer, request_queue) in enumerate(request_queues.items()):
+            thread = threading.Thread(
+                target=self.download,
+                args=(thread_id, peer[0], peer[1], request_queue, progress_queue),
+                daemon=True,
+            )
+            download_threads.append(thread)
+            thread.start()
+
+        max_queue_length = max(len(queue) for queue in request_queues.values())
+
+        # Initialize tqdm progress bars for each peer
+        bars = {
+            peer: tqdm(
+                total=len(request_queue),
+                desc=f"{peer}",
+                ncols=100,
+                position=i,
+                lock_args=False,
+            )
+            for i, (peer, request_queue) in enumerate(request_queues.items())
+        }
+
+        # Calculate total work
+        total_work = sum(
+            [len(request_queue) for request_queue in request_queues.values()]
+        )
+
+        completed_tasks = 0
+        while completed_tasks < total_work:
+            thread_id, progress = progress_queue.get(timeout=0.1)
+            peer = list(request_queues.keys())[thread_id]
+            if progress == 1:
+                bars[peer].update(1)
+                completed_tasks += 1
+
+        for thread in download_threads:
+            thread.join()
+
+        for bar in bars.values():
+            bar.close()
+
+        print("Download completed")
 
     def download(
         self,
+        thread_id: int,
         target_ip: str = "127.0.0.1",
         target_port: int = 0,
         piece_queue: list[str] = None,
+        progress_queue: Queue = None,
     ) -> None:
         try:
-            for piece_name in tqdm(
-                piece_queue,
-                desc=f"{target_ip}:{target_port}",
-                unit="piece",
-                colour="yellow",
-            ):
+            for piece_name in piece_queue:
                 with socket.socket(
                     socket.AF_INET, socket.SOCK_STREAM
                 ) as download_socket:
+                    piece_name = (
+                        f"{piece_name}.txt"
+                        if not piece_name.endswith(".txt")
+                        else piece_name
+                    )
                     download_socket.connect((target_ip, target_port))
                     download_socket.sendall(f"request {piece_name}".encode())
 
@@ -249,9 +366,10 @@ class Node:
                         piece_data += chunk
 
                     if piece_data:
-                        piece_path = os.path.join("temp", f"{piece_name}.txt")
+                        piece_path = os.path.join(TEMP_FOLDER, f"{piece_name}")
                         with open(piece_path, "wb") as piece_file:
                             piece_file.write(piece_data)
+                        progress_queue.put((thread_id, 1))
                     else:
                         print(
                             f"[Error]: Failed to download {piece_name}, no data received"
@@ -262,6 +380,7 @@ class Node:
             print(f"[Error]: Unexpected error during download: {e}")
 
     def node_command_shell(self) -> None:
+        # Node command shell for user to interact with the node
         while True:
             sock_name, sock_port = self.tracker_send_socket.getsockname()
             cmd_input = input(f"{sock_name}:{sock_port} ~ ")
@@ -280,12 +399,6 @@ class Node:
                 case "piece":
                     for piece in self.pieces:
                         print(piece)
-                case "publish":
-                    print(cmd_input)
-                case "d":
-                    self.download(
-                        target_port=int(cmd_parts[1]), piece_queue=cmd_parts[2:]
-                    )
                 case "fetch":
                     self.fetch(cmd_input)
                 case "exit":
@@ -294,10 +407,12 @@ class Node:
                     print("Unknown command")
 
     def close_sockets(self):
+        # Closed all the sockets
         self.tracker_send_socket.close()
         self.upload_socket.close()
 
     def close(self):
+        # Close the node by sending the close message to the tracker and remove all the pieces
         try:
             self.tracker_send_socket.settimeout(REQUEST_TIMEOUT)
             self.tracker_send_socket.sendall("close".encode())
@@ -307,6 +422,9 @@ class Node:
             self.close_sockets()
             for filename in os.listdir(PIECES_FOLDER):
                 os.unlink(os.path.join(PIECES_FOLDER, filename))
+            for filename in os.listdir(TEMP_FOLDER):
+                os.unlink(os.path.join(TEMP_FOLDER, filename))
+            multiprocessing.active_children()
             os._exit(0)
 
 
@@ -384,21 +502,11 @@ class NodeUtils:
         return json.dumps(file_info)
 
     @staticmethod
-    def metafile_convert(input: Dict[str, List[str]]) -> Dict[str, List[str]]:
-        result = {}
-        for key, peers in input.items():
-            if key == "tracker ip":
-                continue
-            for peer in peers["nodes"]:
-                result.setdefault(peer, []).append(key)
-        return result
-
-    @staticmethod
     def get_request_queue(
         filename: str,
-        request_obj: dict[tuple[str, int], dict[str, list[str]]],
-        curr_pieces_info: dict[str, list[str]],
-    ) -> dict[tuple[str, int], list[str]]:
+        request_obj: Dict[Tuple[str, int], Dict[str, List[str]]],
+        curr_pieces_info: Dict[str, List[str]],
+    ) -> Dict[tuple[str, int], List[str]]:
         def create_request_queue(filename: str, data: dict[int, list[str]]):
 
             # return key whose value has the minimum length
@@ -468,10 +576,12 @@ class NodeUtils:
         request_queue = {key: [] for key in data}
         file_name = filename.split(".")[0]
         request_queue = create_request_queue(file_name, data)
+
         return request_queue
 
     @staticmethod
     def cli_parser() -> Tuple[str, int]:
+        # Command line parser for Node
         parser = argparse.ArgumentParser(
             prog="Node", description="Init the Node for file system"
         )

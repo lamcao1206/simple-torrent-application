@@ -1,3 +1,6 @@
+# Author: Cao Ngoc Lam
+# Date modified: Thursday 21st Nov 2024
+
 import socket
 from threading import Thread
 from typing import Dict, Tuple
