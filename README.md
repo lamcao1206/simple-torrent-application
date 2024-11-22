@@ -25,9 +25,10 @@ simultaneously.
 
 ### **Prerequisites**
 - Make sure you alread have installed Python on your system.
-- Otherwise following this guide to fulfill it: ![how-to-install-python-on-windows]{https://www.geeksforgeeks.org/how-to-install-python-on-windows/}
+- Otherwise following this guide to fulfill it: 
+![how-to-install-python-on-windows](https://www.geeksforgeeks.org/how-to-install-python-on-windows/)
 
-### **Running the application
+### **Running the application**
 1. Clone the repository and navigate the project directory
 ```bash
    git clone https://github.com/nhatkhangcs/231-computer-network-assignment1.git
