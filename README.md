@@ -25,8 +25,7 @@ simultaneously.
 
 ### **Prerequisites**
 - Make sure you alread have installed Python on your system.
-- Otherwise following this guide to fulfill it: https://www.geeksforgeeks.org/how-to-install-
-python-on-windows/
+- Otherwise following this guide to fulfill it: ![how-to-install-python-on-windows]{https://www.geeksforgeeks.org/how-to-install-python-on-windows/}
 
 ### **Running the application
 1. Clone the repository and navigate the project directory
@@ -49,7 +48,7 @@ python-on-windows/
    ```
 **NOTE:** When tracker listening connection from nodes, if failed, temporarily turning off your firewall and antivirus software,then try again.
 
-### **Tracker command-shell interpreter**
+## **Tracker command-shell interpreter**
 
 
 ## **Node command-shell interpreter**
