@@ -1,11 +1,11 @@
 # Author: Cao Ngoc Lam, Nguyen Chau Hoang Long
-# Date modified: Thursday 21st Nov 2024
+# Date modified: Thursday 22st Nov 2024
 
 from typing import Tuple, List, Dict
 from threading import Thread
+from tqdm import tqdm
 import socket
 import os
-import traceback
 import mmap
 import json
 import time
@@ -80,10 +80,6 @@ class Node:
             daemon=True,
         )
 
-        directories = [REPO_FOLDER, TEMP_FOLDER, PIECES_FOLDER]
-        for directory in directories:
-            os.makedirs(directory, exist_ok=True)
-
         self.pieces = NodeUtils.generate_pieces_from_repo_files(
             folder_name=REPO_FOLDER, piece_size=PIECE_SIZE
         )
@@ -121,7 +117,7 @@ class Node:
 
     def explore_pieces_request_handler(self, msg: str, conn: socket.socket) -> None:
         """
-        Handle the explore pieces request from corresponding node
+        Handle the explore pieces request from corresponding node and send the pieces information back
         Args:
             - msg (str): message content
             - conn (socket.socket): Socket connection
@@ -191,17 +187,41 @@ class Node:
     def fetch(self, message: str) -> None:
         # Fetch the files by sending the request to the tracker and get the pieces information from the peers
         try:
-            requested_files = message.split()[1:]
+            # Filter out the files that are already available in the repo
+            available_files = os.listdir(REPO_FOLDER)
+            for file in message.split()[1:]:
+                if file in available_files:
+                    print(f"[Warning]: You already have file {file}")
+
+            requested_files = [
+                file for file in message.split()[1:] if file not in available_files
+            ]
+
+            if len(requested_files) == 0:
+                return
+
+            # Send the fetch message to the tracker to get the peers information related to the requested files
+            print(
+                "Fetching to tracker to get peers information may contain pieces of requested files..."
+            )
+
             self.tracker_send_socket.sendall(message.encode())
             data = self.tracker_send_socket.recv(1024).decode()
             data = json.loads(data)
-            print("[Tracker Response]")
+            print("[Result]:")
             print(json.dumps(data, indent=4))
             # {'127.0.0.1:54782': {'ip_addr': '127.0.0.1', 'upload_port': 54781}, '127.0.0.1:54784': {'ip_addr': '127.0.0.1', 'upload_port': 54783}, 'tracker_ip': '127.0.0.1:8000'}
+
+            # Send request to other peers to get pieces information of those peers
+            if len(data) == 1:
+                print("[Warning]: No peers found that contain the requested files")
+                return
+
+            print("Requesting pieces information from peers...", end=" ")
             request_pieces_obj: Dict[Tuple[str, int], Dict[str, List[str]]] = {}
             curr_pieces_info: Dict[str, List[str]] = {}
-            display = {}
             request_queues: Dict[Tuple[str, int], List[str]] = {}
+            display_data: Dict[Tuple[str, int], List[str]] = {}
             for piece in self.pieces:
                 curr_pieces_info.setdefault(piece.original_filename, []).append(
                     f"{piece.piece_id}"
@@ -219,31 +239,54 @@ class Node:
                         ip_addr, upload_port, requested_files
                     )
                     request_queues[(ip_addr, upload_port)] = []
-                    display[str((ip_addr, upload_port))] = []
                     request_pieces_obj[(ip_addr, upload_port)] = pieces_info
+                    display_data[str((ip_addr, upload_port))] = []
 
-            print("[Request to other peers]: OK")
+            print("Ok")
 
             for file in requested_files:
                 file_request_queue = NodeUtils.get_request_queue(
                     file, request_pieces_obj, curr_pieces_info
                 )
                 for peer, pieces in file_request_queue.items():
-                    display[str(peer)].extend(pieces)
                     request_queues[peer].extend(pieces)
+                    display_data[str(peer)].extend(pieces)
 
+            # Display the optimize requested queue for each peer
+            for peer, queue in display_data.items():
+                display_data[peer] = str(queue)
+
+            print(json.dumps(display_data, indent=2))
             print("Start downloading...")
             # Start downloading process
+
             self.download_manager(request_queues)
 
+            # Combine downloading pieces to create the requested files
             self.combine_pieces(requested_files)
+            self.pieces.extend(
+                NodeUtils.generate_pieces_from_repo_files(
+                    folder_name=REPO_FOLDER,
+                    file_list=requested_files,
+                    piece_size=PIECE_SIZE,
+                )
+            )
 
+            print("Combined pieces ok")
+
+            # Publish new file info to tracker
             new_file_info = NodeUtils.generate_files_info_from(
                 REPO_FOLDER, requested_files
             )
 
-            self.tracker_send_socket.sendall(f"publish {new_file_info}".encode())
+            print(new_file_info)
+            msg = f"publish {new_file_info}"
+            print(msg)
+
+            self.tracker_send_socket.send(msg.encode())
+            time.sleep(0.1)
             response_status = self.tracker_send_socket.recv(1024).decode()
+            print(response_status)
             if response_status != "Published":
                 print("[Error]: Failed to publish new file info to tracker")
 
@@ -270,18 +313,10 @@ class Node:
             )
             return {}
 
-    def download_manager(
-        self, request_queues: Dict[Tuple[str, int], List[str]]
-    ) -> None:
-        # Manage the download process by creating threads for each peer and update the progress
+    def download_manager(self, request_queues: Dict[Tuple[str, int], List[str]]):
         download_threads = []
-
         for peer, queue in request_queues.items():
-            thread = Thread(
-                target=self.download,
-                args=(peer[0], peer[1], queue),
-                daemon=False,
-            )
+            thread = Thread(target=self.download, args=(peer[0], peer[1], queue))
             download_threads.append(thread)
             thread.start()
 
@@ -290,22 +325,12 @@ class Node:
 
         print("Download completed")
 
-    def download(
-        self,
-        target_ip: str = "127.0.0.1",
-        target_port: int = 0,
-        piece_queue: list[str] = None,
-    ) -> None:
+    def download(self, target_ip: str, target_port: int, piece_queue: List[str]):
         try:
             for piece_name in piece_queue:
                 with socket.socket(
                     socket.AF_INET, socket.SOCK_STREAM
                 ) as download_socket:
-                    piece_name = (
-                        f"{piece_name}.txt"
-                        if not piece_name.endswith(".txt")
-                        else piece_name
-                    )
                     download_socket.connect((target_ip, target_port))
                     download_socket.sendall(f"request {piece_name}".encode())
 
@@ -320,6 +345,8 @@ class Node:
                         piece_path = os.path.join(TEMP_FOLDER, f"{piece_name}")
                         with open(piece_path, "wb") as piece_file:
                             piece_file.write(piece_data)
+
+                        # Update the progress bar for this thread after each piece download
                     else:
                         print(
                             f"[Error]: Failed to download {piece_name}, no data received"
@@ -364,7 +391,7 @@ class Node:
                 case "fetch":
                     self.fetch(cmd_input)
                 case "exit":
-                    break
+                    self.close()
                 case _:
                     print("Unknown command")
 
@@ -550,7 +577,7 @@ class NodeUtils:
         )
         parser.add_argument(
             "--host",
-            default="127.0.0.1",
+            default="172.20.10.2",
             help="Hostname of the tracker (default: 127.0.0.1)",
         )
         parser.add_argument(
@@ -562,19 +589,30 @@ class NodeUtils:
         args = parser.parse_args()
         return (args.host, args.port)
 
+    @staticmethod
+    def get_host_default_ip() -> str:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 1))
+            ip = s.getsockname()[0]
+        except Exception:
+            ip = "127.0.0.1"
+        finally:
+            s.close()
+        return ip
+
 
 def main() -> None:
-    host, port = NodeUtils.cli_parser()
-    node = Node(host, port)
+    tracker_ip, tracker_port = NodeUtils.cli_parser()
+    node_ip = NodeUtils.get_host_default_ip()
+    node = Node(tracker_ip, tracker_port, node_ip)
     try:
         node.start()
     except KeyboardInterrupt:
         print("\n[Exception]: Interrupted by user")
         node.close()
     except Exception as e:
-        print(f"\n[Exception]: {traceback.format_exc(e)}")
-        node.close()
-    finally:
+        print(f"\n[Exception]: {repr(e)}")
         node.close()
 
 

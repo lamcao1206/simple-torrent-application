@@ -46,7 +46,7 @@ class Peer:
 
             meta_file.seek(0)
             json.dump(meta_info, meta_file, indent=3)
-            meta_file.truncate()  # Remove any remaining data after the new content
+            meta_file.truncate()
 
 
 class Tracker:
@@ -55,12 +55,7 @@ class Tracker:
     ) -> None:
         """
         Initialize the tracker with the given host, port, and maximum number of nodes
-        and init the metainfo file
-
-        Args:
-            host (str, optional): _description_. Defaults to "127.0.0.1".
-            port (int, optional): _description_. Defaults to 8000.
-            max_nodes (int, optional): _description_. Defaults to 10.
+        and init the metainfo file for the tracker
         """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -71,11 +66,13 @@ class Tracker:
         self.node_serving_thread: Thread = Thread(target=self.node_serve, daemon=True)
         with open("metainfo.json", "w") as meta_file:
             tracker_addr = f"{self.sock.getsockname()[0]}:{self.sock.getsockname()[1]}"
+            print(tracker_addr)
             json.dump(
                 {"tracker_addr": tracker_addr},
                 meta_file,
                 indent=3,
             )
+        print("[Tracker]: Tracker is running at", tracker_addr)
 
     def start(self) -> None:
         # Start the thread to accept incoming connections from peers
@@ -144,6 +141,7 @@ class Tracker:
                 continue
 
             command, *args = data.split()
+            print(args)
             if command == "fetch":
                 self.fetch_response(node_socket, args)
             elif command == "close":
@@ -158,7 +156,8 @@ class Tracker:
                         self.peers[node_addr].ip_address,
                         self.peers[node_addr].peer_upload_port,
                     )
-                    node_socket.send("Published".encode())
+                    self.peers[node_addr].file_info = file_info
+                    node_socket.send("OK".encode())
                 except Exception as e:
                     print(e)
                     node_socket.send(
@@ -225,6 +224,9 @@ class Tracker:
             match cmd_parts[0]:
                 case "list":
                     self.list_command_shell()
+                case "peer":
+                    for peer in self.peers.values():
+                        print(peer)
                 case "exit":
                     break
                 case _:
@@ -273,7 +275,7 @@ class TrackerUtil:
         )
         parser.add_argument(
             "--host",
-            default="127.0.0.1",
+            default=TrackerUtil.get_host_default_ip(),
             help="Hostname of the tracker (default: 127.0.0.1)",
         )
         parser.add_argument(
@@ -290,6 +292,18 @@ class TrackerUtil:
         )
         args = parser.parse_args()
         return (args.host, args.port, args.max_nodes)
+
+    @staticmethod
+    def get_host_default_ip() -> str:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 1))
+            ip = s.getsockname()[0]
+        except Exception:
+            ip = "127.0.0.1"
+        finally:
+            s.close()
+        return ip
 
 
 def main() -> None:

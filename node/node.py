@@ -6,7 +6,6 @@ from threading import Thread
 from tqdm import tqdm
 import socket
 import os
-import traceback
 import mmap
 import json
 import time
@@ -80,10 +79,6 @@ class Node:
             args=(self.upload_socket,),
             daemon=True,
         )
-
-        directories = [REPO_FOLDER, TEMP_FOLDER, PIECES_FOLDER]
-        for directory in directories:
-            os.makedirs(directory, exist_ok=True)
 
         self.pieces = NodeUtils.generate_pieces_from_repo_files(
             folder_name=REPO_FOLDER, piece_size=PIECE_SIZE
@@ -225,8 +220,8 @@ class Node:
             print("Requesting pieces information from peers...", end=" ")
             request_pieces_obj: Dict[Tuple[str, int], Dict[str, List[str]]] = {}
             curr_pieces_info: Dict[str, List[str]] = {}
-
             request_queues: Dict[Tuple[str, int], List[str]] = {}
+            display_data: Dict[Tuple[str, int], List[str]] = {}
             for piece in self.pieces:
                 curr_pieces_info.setdefault(piece.original_filename, []).append(
                     f"{piece.piece_id}"
@@ -245,6 +240,7 @@ class Node:
                     )
                     request_queues[(ip_addr, upload_port)] = []
                     request_pieces_obj[(ip_addr, upload_port)] = pieces_info
+                    display_data[str((ip_addr, upload_port))] = []
 
             print("Ok")
 
@@ -254,22 +250,45 @@ class Node:
                 )
                 for peer, pieces in file_request_queue.items():
                     request_queues[peer].extend(pieces)
+                    display_data[str(peer)].extend(pieces)
 
+            # Display the optimize requested queue for each peer
+            for peer, queue in display_data.items():
+                display_data[peer] = str(queue)
+
+            print(json.dumps(display_data, indent=2))
             print("Start downloading...")
             # Start downloading process
+
             self.download_manager(request_queues)
-            # self.combine_pieces(requested_files)
+
+            # Combine downloading pieces to create the requested files
+            self.combine_pieces(requested_files)
+            self.pieces.extend(
+                NodeUtils.generate_pieces_from_repo_files(
+                    folder_name=REPO_FOLDER,
+                    file_list=requested_files,
+                    piece_size=PIECE_SIZE,
+                )
+            )
+
+            print("Combined pieces ok")
 
             # Publish new file info to tracker
-            # new_file_info = NodeUtils.generate_files_info_from(
-            #     REPO_FOLDER, requested_files
-            # )
+            new_file_info = NodeUtils.generate_files_info_from(
+                REPO_FOLDER, requested_files
+            )
 
-            # self.tracker_send_socket.sendall(f"publish {new_file_info}".encode())
-            # response_status = self.tracker_send_socket.recv(1024).decode()
-            # print(response_status)
-            # if response_status != "Published":
-            #     print("[Error]: Failed to publish new file info to tracker")
+            print(new_file_info)
+            msg = f"publish {new_file_info}"
+            print(msg)
+
+            self.tracker_send_socket.send(msg.encode())
+            time.sleep(0.1)
+            response_status = self.tracker_send_socket.recv(1024).decode()
+            print(response_status)
+            if response_status != "Published":
+                print("[Error]: Failed to publish new file info to tracker")
 
         except Exception as e:
             print(f"[Error]: Unexpected error during fetch: {e}")
@@ -372,7 +391,7 @@ class Node:
                 case "fetch":
                     self.fetch(cmd_input)
                 case "exit":
-                    break
+                    self.close()
                 case _:
                     print("Unknown command")
 
@@ -558,7 +577,7 @@ class NodeUtils:
         )
         parser.add_argument(
             "--host",
-            default="127.0.0.1",
+            default="172.20.10.2",
             help="Hostname of the tracker (default: 127.0.0.1)",
         )
         parser.add_argument(
@@ -570,19 +589,30 @@ class NodeUtils:
         args = parser.parse_args()
         return (args.host, args.port)
 
+    @staticmethod
+    def get_host_default_ip() -> str:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 1))
+            ip = s.getsockname()[0]
+        except Exception:
+            ip = "127.0.0.1"
+        finally:
+            s.close()
+        return ip
+
 
 def main() -> None:
-    host, port = NodeUtils.cli_parser()
-    node = Node(host, port)
+    tracker_ip, tracker_port = NodeUtils.cli_parser()
+    node_ip = NodeUtils.get_host_default_ip()
+    node = Node(tracker_ip, tracker_port, node_ip)
     try:
         node.start()
     except KeyboardInterrupt:
         print("\n[Exception]: Interrupted by user")
         node.close()
     except Exception as e:
-        print(f"\n[Exception]: {traceback.format_exc(e)}")
-        node.close()
-    finally:
+        print(f"\n[Exception]: {repr(e)}")
         node.close()
 
 
