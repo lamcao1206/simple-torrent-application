@@ -6,7 +6,4 @@ fetch.yaml
 
 __pycache__/
 pieces/
-helper/
-node1/
-node2/
 temp/
