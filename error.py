@@ -1,9 +1,8 @@
 # Author: Cao Ngoc Lam, Nguyen Chau Hoang Long
-# Date modified: Thursday 22st Nov 2024
+# Date modified: Thursday 21st Nov 2024
 
 from typing import Tuple, List, Dict
-from threading import Thread
-from tqdm import tqdm
+import threading
 import socket
 import os
 import traceback
@@ -12,13 +11,15 @@ import json
 import time
 import math
 import argparse
+from queue import Queue
+from tqdm import tqdm
 
 
 REPO_FOLDER = "repo"
 PIECES_FOLDER = "pieces"
 TEMP_FOLDER = "temp"
 PIECE_SIZE = 512 * 1024
-REQUEST_TIMEOUT = 2
+REQUEST_TIMEOUT = 5
 
 
 class Piece:
@@ -75,18 +76,10 @@ class Node:
         self.pieces: List[Piece] = []
 
         # Thread for listening upload requests
-        self.upload_listening_request_thread = Thread(
+        self.upload_listening_request_thread = threading.Thread(
             target=self.upload_listening_request,
             args=(self.upload_socket,),
             daemon=True,
-        )
-
-        directories = [REPO_FOLDER, TEMP_FOLDER, PIECES_FOLDER]
-        for directory in directories:
-            os.makedirs(directory, exist_ok=True)
-
-        self.pieces = NodeUtils.generate_pieces_from_repo_files(
-            folder_name=REPO_FOLDER, piece_size=PIECE_SIZE
         )
 
     def upload_listening_request(self, upload_socket: socket.socket) -> None:
@@ -101,8 +94,8 @@ class Node:
                 conn, addr = upload_socket.accept()
             except Exception as e:
                 break
-            upload_handler_thread = Thread(
-                target=self.upload_request_handler, args=(conn,), daemon=False
+            upload_handler_thread = threading.Thread(
+                target=self.upload_request_handler, args=(conn), daemon=True
             )
             upload_handler_thread.start()
 
@@ -110,22 +103,22 @@ class Node:
         """
         Handle the upload request from corresponding node
         Args:
-            - conn (socket.socket): Socket connection
-            - addr (Tuple[str, int]):
+            conn (socket.socket): Socket connection
+            addr (Tuple[str, int]):
         """
         with conn:
             msg = conn.recv(1024).decode()
             if msg.startswith("find"):
                 self.explore_pieces_request_handler(msg, conn)
             elif msg.startswith("request"):
-                self.upload_pieces_request_handler(msg.split()[1], conn)
+                self.transfer_pieces_request_handler(msg.split()[1], conn)
 
     def explore_pieces_request_handler(self, msg: str, conn: socket.socket) -> None:
         """
-        Handle the explore pieces request from corresponding node and send the pieces information back
+        Handle the explore pieces request from corresponding node
         Args:
-            - msg (str): message content
-            - conn (socket.socket): Socket connection
+            msg (str): message content
+            conn (socket.socket): Socket connection
         """
         response = {}
         requested_files = msg.split()[1:]
@@ -135,7 +128,7 @@ class Node:
                     response.setdefault(file_name, []).append(f"{piece.piece_id}")
         conn.sendall(json.dumps(response).encode())
 
-    def upload_pieces_request_handler(
+    def transfer_pieces_request_handler(
         self, piece_name: str, conn: socket.socket
     ) -> None:
         piece_path = os.path.join(PIECES_FOLDER, piece_name)
@@ -147,9 +140,28 @@ class Node:
                 conn.sendall(chunk)
 
     def start(self) -> None:
+        """
+        Start the node by setting up the necessary folders, handshake with the tracker, start the upload listening request thread and node command shell
+        """
+        print("ags")
+        self.setup()
+        print("1")
         self.handshake()
+        print("2")
         self.upload_listening_request_thread.start()
+        print("3")
         self.node_command_shell()
+        print("4")
+
+    def setup(self) -> None:
+        # Set up neccessary folders and generate pieces from repo files
+        directories = [REPO_FOLDER, TEMP_FOLDER, PIECES_FOLDER]
+        for directory in directories:
+            os.makedirs(directory, exist_ok=True)
+
+        self.pieces = NodeUtils.generate_pieces_from_repo_files(
+            folder_name=REPO_FOLDER, piece_size=PIECE_SIZE
+        )
 
     def handshake(self) -> None:
         # Handshake with the tracker by sending the first connection message and node information (files, pieces information) to tracker
@@ -187,45 +199,19 @@ class Node:
             + str(self.upload_socket.getsockname()[1])
         )
 
-        print("[Status]: ", self.tracker_send_socket.recv(1024).decode())
-
     def fetch(self, message: str) -> None:
         # Fetch the files by sending the request to the tracker and get the pieces information from the peers
         try:
-            # Filter out the files that are already available in the repo
-            available_files = os.listdir(REPO_FOLDER)
-            for file in message.split()[1:]:
-                if file in available_files:
-                    print(f"[Warning]: You already have file {file}")
-
-            requested_files = [
-                file for file in message.split()[1:] if file not in available_files
-            ]
-
-            if len(requested_files) == 0:
-                return
-
-            # Send the fetch message to the tracker to get the peers information related to the requested files
-            print(
-                "Fetching to tracker to get peers information may contain pieces of requested files..."
-            )
-
+            requested_files = message.split()[1:]
             self.tracker_send_socket.sendall(message.encode())
             data = self.tracker_send_socket.recv(1024).decode()
             data = json.loads(data)
-            print("[Result]:")
+            print("[Tracker Response]")
             print(json.dumps(data, indent=4))
             # {'127.0.0.1:54782': {'ip_addr': '127.0.0.1', 'upload_port': 54781}, '127.0.0.1:54784': {'ip_addr': '127.0.0.1', 'upload_port': 54783}, 'tracker_ip': '127.0.0.1:8000'}
-
-            # Send request to other peers to get pieces information of those peers
-            if len(data) == 1:
-                print("[Warning]: No peers found that contain the requested files")
-                return
-
-            print("Requesting pieces information from peers...", end=" ")
             request_pieces_obj: Dict[Tuple[str, int], Dict[str, List[str]]] = {}
             curr_pieces_info: Dict[str, List[str]] = {}
-
+            display = {}
             request_queues: Dict[Tuple[str, int], List[str]] = {}
             for piece in self.pieces:
                 curr_pieces_info.setdefault(piece.original_filename, []).append(
@@ -244,32 +230,21 @@ class Node:
                         ip_addr, upload_port, requested_files
                     )
                     request_queues[(ip_addr, upload_port)] = []
+                    display[str((ip_addr, upload_port))] = []
                     request_pieces_obj[(ip_addr, upload_port)] = pieces_info
-
-            print("Ok")
-
             for file in requested_files:
                 file_request_queue = NodeUtils.get_request_queue(
                     file, request_pieces_obj, curr_pieces_info
                 )
                 for peer, pieces in file_request_queue.items():
+                    display[str(peer)].extend(pieces)
                     request_queues[peer].extend(pieces)
 
-            print("Start downloading...")
-            # Start downloading process
+            print("[Final Request Queues]")
+            print(json.dumps(display, indent=3))
+            print("Downloading...")
             self.download_manager(request_queues)
-            # self.combine_pieces(requested_files)
-
-            # Publish new file info to tracker
-            # new_file_info = NodeUtils.generate_files_info_from(
-            #     REPO_FOLDER, requested_files
-            # )
-
-            # self.tracker_send_socket.sendall(f"publish {new_file_info}".encode())
-            # response_status = self.tracker_send_socket.recv(1024).decode()
-            # print(response_status)
-            # if response_status != "Published":
-            #     print("[Error]: Failed to publish new file info to tracker")
+            self.combine_pieces(requested_files)
 
         except Exception as e:
             print(f"[Error]: Unexpected error during fetch: {e}")
@@ -278,26 +253,23 @@ class Node:
         self, ip_addr: str, upload_port: str, requested_files: list[str]
     ) -> Dict[str, List[str]]:
         # Fetch to peer with ip_addr and upload_port with nessesary files and return list of pieces related to requested_files
-        try:
-            with socket.socket(
-                socket.AF_INET, socket.SOCK_STREAM
-            ) as pieces_request_socket:
-                pieces_request_socket.connect((ip_addr, int(upload_port)))
-                pieces_request_socket.sendall(
-                    f"find {' '.join(requested_files)}".encode()
-                )
-                data = pieces_request_socket.recv(1024).decode()
-            return json.loads(data)
-        except Exception as e:
-            print(
-                f"[Error]: Failed to request pieces from {ip_addr}:{upload_port} - {e}"
-            )
-            return {}
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as pieces_request_socket:
+            pieces_request_socket.connect((ip_addr, int(upload_port)))
+            pieces_request_socket.sendall(f"find {' '.join(requested_files)}".encode())
+            data = pieces_request_socket.recv(1024).decode()
+        return json.loads(data)
 
-    def download_manager(self, request_queues: Dict[Tuple[str, int], List[str]]):
+    def download_manager(
+        self, request_queues: Dict[Tuple[str, int], List[str]]
+    ) -> None:
         download_threads = []
-        for peer, queue in request_queues.items():
-            thread = Thread(target=self.download, args=(peer[0], peer[1], queue))
+
+        for thread_id, (peer, request_queue) in enumerate(request_queues.items()):
+            thread = threading.Thread(
+                target=self.download,
+                args=(thread_id, peer[0], peer[1], request_queue),
+                daemon=True,
+            )
             download_threads.append(thread)
             thread.start()
 
@@ -306,7 +278,13 @@ class Node:
 
         print("Download completed")
 
-    def download(self, target_ip: str, target_port: int, piece_queue: List[str]):
+    def download(
+        self,
+        thread_id: int,
+        target_ip: str = "127.0.0.1",
+        target_port: int = 0,
+        piece_queue: list[str] = None,
+    ) -> None:
         try:
             for piece_name in piece_queue:
                 with socket.socket(
@@ -326,8 +304,6 @@ class Node:
                         piece_path = os.path.join(TEMP_FOLDER, f"{piece_name}")
                         with open(piece_path, "wb") as piece_file:
                             piece_file.write(piece_data)
-
-                        # Update the progress bar for this thread after each piece download
                     else:
                         print(
                             f"[Error]: Failed to download {piece_name}, no data received"
@@ -338,22 +314,31 @@ class Node:
             print(f"[Error]: Unexpected error during download: {e}")
 
     def combine_pieces(self, requested_files: List[str]) -> None:
+        """Combine pieces to form the original files and move them to the repo folder
+
+        Args:
+            requested_files (List[str]): _description_
+        """
         for file_name in requested_files:
+            piece_files = sorted(
+                [f for f in os.listdir(TEMP_FOLDER) if f.startswith(file_name)],
+                key=lambda x: int(x.split("_")[1].split(".")[0]),
+            )
+
             combined_file_path = os.path.join(REPO_FOLDER, file_name)
+
             with open(combined_file_path, "wb") as combined_file:
-                piece_prefix = f"{file_name.split('.')[0]}_"  # e.g "1MB_"
-                pieces = sorted(
-                    [f for f in os.listdir(TEMP_FOLDER) if f.startswith(piece_prefix)],
-                    key=lambda x: int(x.split("_")[1].split(".")[0]),
-                )
-                for piece in pieces:
-                    piece_path = os.path.join(TEMP_FOLDER, piece)
-                    with open(piece_path, "rb") as piece_file:
-                        with mmap.mmap(
-                            piece_file.fileno(), length=0, access=mmap.ACCESS_READ
-                        ) as mmapped_file:
-                            combined_file.write(mmapped_file)
-            print(f"Combined file {file_name} created successfully in {REPO_FOLDER}")
+                for piece_file in piece_files:
+                    piece_path = os.path.join(TEMP_FOLDER, piece_file)
+
+                    # Use mmap to read the pieces efficiently
+                    with open(piece_path, "rb") as piece:
+                        piece_mmap = mmap.mmap(
+                            piece.fileno(), length=0, access=mmap.ACCESS_READ
+                        )
+                        combined_file.write(piece_mmap)
+                        piece_mmap.close()
+            print(f"[Combine]: {file_name} combined and moved to repo folder")
 
     def node_command_shell(self) -> None:
         # Node command shell for user to interact with the node
@@ -377,15 +362,13 @@ class Node:
                     print("Unknown command")
 
     def close_sockets(self):
-        # Closed all the sockets
         self.tracker_send_socket.close()
         self.upload_socket.close()
 
     def close(self):
-        # Close the node by sending the close message to the tracker and remove all the pieces
         try:
-            self.tracker_send_socket.settimeout(REQUEST_TIMEOUT)
-            self.tracker_send_socket.sendall("close".encode())
+            if self.tracker_send_socket.fileno() != -1:
+                self.tracker_send_socket.sendall("close".encode())
         except Exception as e:
             print(f"[Error]: Failed to send close message to tracker: {e}")
         finally:
@@ -449,15 +432,13 @@ class NodeUtils:
 
     @staticmethod
     def generate_files_info_from(
-        folder_name: str = None,
-        file_names: List[str] = None,
-        piece_size: int = 512 * 1024,
+        folder_name: str = None, file_name: str = None, piece_size: int = 512 * 1024
     ) -> str:
-        # Generate file info from folder_name/[file_names].txt
+        # Generate file info from folder_name/file_name.txt
         # If file_name is None, generate file infos from all files in folder_name
 
         file_info = {}
-        file_names = file_names if file_names is not None else os.listdir(folder_name)
+        file_names = [file_name] if file_name is not None else os.listdir(folder_name)
 
         for file_name in file_names:
             file_path = os.path.join(folder_name, file_name)

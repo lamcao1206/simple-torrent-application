@@ -30,23 +30,20 @@ class Peer:
         self.file_info = file_info
 
     def close(self):
+        # Close the peer connection and remove the peer from the metadata file
         self.peer_socket.close()
         with open("metainfo.json", "r+") as meta_file:
             meta_info = json.load(meta_file)
 
-            # Loop through each file in the file_info dictionary to remove the peer from the nodes list
             for file_name in list(self.file_info.keys()):
                 if file_name in meta_info:
                     node_address = f"{self.ip_address}:{self.peer_upload_port}"
-                    # If the node address is in the nodes list, remove it
                     if node_address in meta_info[file_name]["nodes"]:
                         meta_info[file_name]["nodes"].remove(node_address)
 
-                    # If no nodes are left for the file, remove the file entry
                     if len(meta_info[file_name]["nodes"]) == 0:
                         del meta_info[file_name]
 
-            # Save the updated metadata back to the file
             meta_file.seek(0)
             json.dump(meta_info, meta_file, indent=3)
             meta_file.truncate()  # Remove any remaining data after the new content
@@ -56,6 +53,15 @@ class Tracker:
     def __init__(
         self, host: str = "127.0.0.1", port: int = 8000, max_nodes: int = 10
     ) -> None:
+        """
+        Initialize the tracker with the given host, port, and maximum number of nodes
+        and init the metainfo file
+
+        Args:
+            host (str, optional): _description_. Defaults to "127.0.0.1".
+            port (int, optional): _description_. Defaults to 8000.
+            max_nodes (int, optional): _description_. Defaults to 10.
+        """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((host, port))
@@ -72,10 +78,12 @@ class Tracker:
             )
 
     def start(self) -> None:
+        # Start the thread to accept incoming connections from peers
         self.node_serving_thread.start()
         self.tracker_command_shell()
 
     def node_serve(self) -> None:
+        # Loop to accept incoming connections from peers
         while True:
             try:
                 node_socket, node_addr = self.sock.accept()
@@ -84,35 +92,47 @@ class Tracker:
 
             data = node_socket.recv(BUFFER_SIZE).decode()
             if data == "First Connection":
-                peer_info: list[str] = (
-                    node_socket.recv(BUFFER_SIZE).decode().split(" ", 3)
-                )
+                try:
+                    peer_info: list[str] = (
+                        node_socket.recv(BUFFER_SIZE).decode().split(" ", 3)
+                    )
 
-                TrackerUtil.update_metainfo(
-                    json.loads(peer_info[3]), peer_info[0], int(peer_info[2])
-                )
+                    TrackerUtil.update_metainfo(
+                        json.loads(peer_info[3]), peer_info[0], int(peer_info[2])
+                    )
 
-                peer_thread: Thread = Thread(
-                    target=self.handle_node_request,
-                    args=[node_socket, node_addr],
-                    daemon=True,
-                )
-                print(peer_info[3])
+                    peer_thread: Thread = Thread(
+                        target=self.handle_node_request,
+                        args=[node_socket, node_addr],
+                        daemon=True,
+                    )
 
-                self.peers[node_addr] = Peer(
-                    ip_address=peer_info[0],  # IP Address of the peer
-                    peer_socket=node_socket,  # Node socket for communication with that peer
-                    peer_thread=peer_thread,  # Thread for handling that peer
-                    peer_listening_port=int(peer_info[1]),  # Listening port of the peer
-                    peer_upload_port=int(peer_info[2]),  # Upload port of the peer
-                    file_info=json.loads(peer_info[3]),  # File information for the peer
-                )
+                    self.peers[node_addr] = Peer(
+                        ip_address=peer_info[0],  # IP Address of the peer
+                        peer_socket=node_socket,  # Node socket for communication with that peer
+                        peer_thread=peer_thread,  # Thread for handling that peer
+                        peer_listening_port=int(
+                            peer_info[1]
+                        ),  # Listening port of the peer
+                        peer_upload_port=int(peer_info[2]),  # Upload port of the peer
+                        file_info=json.loads(
+                            peer_info[3]
+                        ),  # File information for the peer
+                    )
 
-                print(f"[Connection]: {peer_info[0]}:{peer_info[1]} joined the network")
-                peer_thread.start()
+                    print(
+                        f"[Connection]: {peer_info[0]}:{peer_info[1]} joined the network"
+                    )
+                    node_socket.send("Connected".encode())
+                    peer_thread.start()
+                except Exception as e:
+                    node_socket.send(
+                        "Some error occurred while updating metadata on tracker".encode()
+                    )
+                    node_socket.close()
 
     def handle_node_request(self, node_socket: socket.socket, node_addr: str) -> None:
-        print(node_addr)  # (IP, port)
+        # Handle the requests from the peer with the given socket and address (IP, port)
         while True:
             data = ""
             try:
@@ -130,11 +150,31 @@ class Tracker:
                 print(f"[Close]: {node_addr[0]}:{node_addr[1]} offline")
                 self.remove_peer(node_addr)
                 break
+            elif command == "publish":
+                try:
+                    file_info = json.loads(args[0])
+                    TrackerUtil.update_metainfo(
+                        file_info,
+                        self.peers[node_addr].ip_address,
+                        self.peers[node_addr].peer_upload_port,
+                    )
+                    node_socket.send("Published".encode())
+                except Exception as e:
+                    print(e)
+                    node_socket.send(
+                        "Some error occurred while updating metadata on tracker".encode()
+                    )
         node_socket.close()
 
     def fetch_response(self, node_socket: socket.socket, files_name: str) -> None:
+        """Scan the file_info of all peers to find the requested files and send the response to the peer
+
+        Args:
+            node_socket (socket.socket): socket for responding the peer
+            files_name (str): list of files that the peer want to fetch (fetch 3.txt 4.txt)
+        """
         response = {}
-        for file_name in files_name:  # fetch 3.txt 4.txt
+        for file_name in files_name:
             for peer in self.peers.values():
                 if file_name in peer.file_info:
                     response[f"{peer.ip_address}:{peer.peer_listening_port}"] = {
@@ -145,10 +185,14 @@ class Tracker:
         tracker_ip = self.sock.getsockname()[0]
         tracker_port = self.sock.getsockname()[1]
         response["tracker_ip"] = f"{tracker_ip}:{tracker_port}"
-        print(response)
         node_socket.send(json.dumps(response).encode())
 
     def remove_peer(self, peer_addr: str) -> None:
+        """Remove the peer with corresponding peer address from the tracker
+
+        Args:
+            peer_addr (str): Key of the peer in the peers dictionary (str(Tuple(str, int)))
+        """
         if peer_addr in self.peers:
             try:
                 self.peers[peer_addr].close()
@@ -160,6 +204,7 @@ class Tracker:
             print(f"[Warning]: Peer {peer_addr} not found")
 
     def list_command_shell(self) -> None:
+        """List all the peers that are currently connected to the tracker"""
         if len(self.peers) == 0:
             print("No peer connecting to tracker!")
             return
@@ -168,6 +213,7 @@ class Tracker:
             print(f"- [{index}] {str(peer_addr)}")
 
     def tracker_command_shell(self) -> None:
+        """Command shell for interacting with the tracker (currently support list and exit)"""
         while True:
             sock_name, sock_port = self.sock.getsockname()
             cmd_input = input()
@@ -185,6 +231,7 @@ class Tracker:
                     print("Unknown command")
 
     def close(self) -> None:
+        """Close the tracker and all the peers connected to the tracker"""
         self.sock.close()
         for peer in self.peers.values():
             peer.close()
@@ -194,22 +241,33 @@ class TrackerUtil:
     @staticmethod
     def update_metainfo(
         file_info: Dict[str, int], ip_address: str, upload_port: int
-    ) -> bool:
-        # Update file_info into meta_info:
+    ) -> None:
+        """Update the metainfo file with the new file information and the peer address
+
+        Args:
+            file_info (Dict[str, int]): file information of the peer
+            ip_address (str): IP address of the peer
+            upload_port (int): Upload port of the peer
+        """
         with open("metainfo.json", "r") as meta_file:
             meta_info = json.load(meta_file)
             for file_name, file_info in file_info.items():
-                if file_name in meta_info:
-                    meta_info[file_name]["nodes"].append(f"{ip_address}:{upload_port}")
+                node_address = f"{ip_address}:{upload_port}"
+                if (
+                    file_name in meta_info
+                    and not node_address in meta_info[file_name]["nodes"]
+                ):
+                    meta_info[file_name]["nodes"].append(node_address)
                 else:
                     meta_info[file_name] = file_info
-                    meta_info[file_name]["nodes"] = [f"{ip_address}:{upload_port}"]
+                    meta_info[file_name]["nodes"] = [node_address]
 
         with open("metainfo.json", "w") as meta_file:
             json.dump(meta_info, meta_file, indent=3)
 
     @staticmethod
     def cli_parser() -> Tuple[str, int, int]:
+        # Parse the command line arguments for the tracker
         parser = argparse.ArgumentParser(
             prog="Tracker", description="Init the tracker for file system"
         )
