@@ -124,7 +124,7 @@ class Node:
         # (IP Address) (Port for sending) (Port for uploading) (File info)
 
         node_info = (
-            self.tracker_ip
+            self.upload_ip
             + " "
             + str(self.tracker_send_socket.getsockname()[1])
             + " "
