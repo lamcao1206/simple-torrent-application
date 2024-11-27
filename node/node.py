@@ -161,7 +161,6 @@ class Node:
 
         node_info = (
             self.upload_ip
-            self.upload_ip
             + " "
             + str(self.tracker_send_socket.getsockname()[1])
             + " "
