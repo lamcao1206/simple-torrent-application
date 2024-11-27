@@ -1,3 +1,45 @@
 {
-   "tracker_addr": "172.20.10.2:8000"
+   "tracker_addr": "172.20.10.2:8000",
+   "1.pdf": {
+      "file_size": 4581703,
+      "piece_size": 524288,
+      "piece_count": 9,
+      "nodes": [
+         "172.20.10.2:50466",
+         "172.20.10.2:50468"
+      ]
+   },
+   "2.pdf": {
+      "file_size": 4953576,
+      "piece_size": 524288,
+      "piece_count": 10,
+      "nodes": [
+         "172.20.10.2:50466",
+         "172.20.10.2:50468"
+      ]
+   },
+   "6.pdf": {
+      "file_size": 3790153,
+      "piece_size": 524288,
+      "piece_count": 8,
+      "nodes": [
+         "172.20.10.2:50468"
+      ]
+   },
+   "5.pdf": {
+      "file_size": 4279599,
+      "piece_size": 524288,
+      "piece_count": 9,
+      "nodes": [
+         "172.20.10.2:50468"
+      ]
+   },
+   "4.pdf": {
+      "file_size": 3296397,
+      "piece_size": 524288,
+      "piece_count": 7,
+      "nodes": [
+         "172.20.10.2:50468"
+      ]
+   }
 }

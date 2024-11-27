@@ -7,3 +7,5 @@ fetch.yaml
 __pycache__/
 pieces/
 temp/
+node1/
+node2/

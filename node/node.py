@@ -66,9 +66,13 @@ class Node:
         self.upload_socket.bind((upload_IP, 0))
         self.upload_socket.listen(10)
 
-        # Server info
         self.tracker_ip = tracker_ip
         self.tracker_port = tracker_port
+        self.upload_ip = upload_IP
+
+        diretories = [REPO_FOLDER, TEMP_FOLDER, PIECES_FOLDER]
+        for directory in diretories:
+            os.makedirs(directory, exist_ok=True)
 
         # Pieces Info
         self.pieces: List[Piece] = []
@@ -157,7 +161,7 @@ class Node:
         # (IP Address) (Port for sending) (Port for uploading) (File info)
 
         node_info = (
-            self.tracker_ip
+            self.upload_ip
             + " "
             + str(self.tracker_send_socket.getsockname()[1])
             + " "
@@ -273,21 +277,18 @@ class Node:
             )
 
             print("Combined pieces ok")
+            for file in os.listdir(TEMP_FOLDER):
+                os.unlink(os.path.join(TEMP_FOLDER, file))
 
             # Publish new file info to tracker
             new_file_info = NodeUtils.generate_files_info_from(
                 REPO_FOLDER, requested_files
             )
-
-            print(new_file_info)
             msg = f"publish {new_file_info}"
-            print(msg)
-
             self.tracker_send_socket.send(msg.encode())
             time.sleep(0.1)
             response_status = self.tracker_send_socket.recv(1024).decode()
-            print(response_status)
-            if response_status != "Published":
+            if response_status != "OK":
                 print("[Error]: Failed to publish new file info to tracker")
 
         except Exception as e:
@@ -345,8 +346,6 @@ class Node:
                         piece_path = os.path.join(TEMP_FOLDER, f"{piece_name}")
                         with open(piece_path, "wb") as piece_file:
                             piece_file.write(piece_data)
-
-                        # Update the progress bar for this thread after each piece download
                     else:
                         print(
                             f"[Error]: Failed to download {piece_name}, no data received"
@@ -365,6 +364,8 @@ class Node:
                     [f for f in os.listdir(TEMP_FOLDER) if f.startswith(piece_prefix)],
                     key=lambda x: int(x.split("_")[1].split(".")[0]),
                 )
+                if len(pieces) == 0:
+                    continue
                 for piece in pieces:
                     piece_path = os.path.join(TEMP_FOLDER, piece)
                     with open(piece_path, "rb") as piece_file:
@@ -372,7 +373,6 @@ class Node:
                             piece_file.fileno(), length=0, access=mmap.ACCESS_READ
                         ) as mmapped_file:
                             combined_file.write(mmapped_file)
-            print(f"Combined file {file_name} created successfully in {REPO_FOLDER}")
 
     def node_command_shell(self) -> None:
         # Node command shell for user to interact with the node
@@ -446,9 +446,7 @@ class NodeUtils:
                         break
 
                     # Create a new piece file
-                    piece_name = (
-                        f"{os.path.basename(file_name).split('.')[0]}_{piece_id}.txt"
-                    )
+                    piece_name = f"{os.path.basename(file_name).split('.')[0]}_{piece_id}.{os.path.basename(file_name).split('.')[1]}"
 
                     piece_path = f"{PIECES_FOLDER}/{piece_name}"
                     with open(piece_path, "wb") as piece_file:
@@ -497,7 +495,9 @@ class NodeUtils:
         request_obj: Dict[Tuple[str, int], Dict[str, List[str]]],
         curr_pieces_info: Dict[str, List[str]],
     ) -> Dict[tuple[str, int], List[str]]:
-        def create_request_queue(filename: str, data: dict[int, list[str]]):
+        def create_request_queue(
+            filename: str, file_extension: str, data: dict[int, list[str]]
+        ):
 
             # return key whose value has the minimum length
             def get_min_key(d, keys):
@@ -533,7 +533,7 @@ class NodeUtils:
 
                     # Append request queue of corresponding node
                     piece = data[min_key][0]
-                    piece_name = f"{filename}_{piece}.txt"
+                    piece_name = f"{filename}_{piece}.{file_extension}"
                     result[min_key].append(piece_name)
 
                     # remove ${piece} in each of keys'value (if any) and decrease total_value
@@ -565,7 +565,8 @@ class NodeUtils:
         # get request_queue for each node
         request_queue = {key: [] for key in data}
         file_name = filename.split(".")[0]
-        request_queue = create_request_queue(file_name, data)
+        file_extension = filename.split(".")[1]
+        request_queue = create_request_queue(file_name, file_extension, data)
 
         return request_queue
 

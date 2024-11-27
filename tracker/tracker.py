@@ -29,6 +29,14 @@ class Peer:
         self.peer_thread = peer_thread
         self.file_info = file_info
 
+    def __str__(self) -> str:
+        return (
+            f"Peer(ip_address={self.ip_address}, "
+            f"peer_listening_port={self.peer_listening_port}, "
+            f"peer_upload_port={self.peer_upload_port}, "
+            f"file_info={self.file_info})"
+        )
+
     def close(self):
         # Close the peer connection and remove the peer from the metadata file
         self.peer_socket.close()
@@ -66,7 +74,6 @@ class Tracker:
         self.node_serving_thread: Thread = Thread(target=self.node_serve, daemon=True)
         with open("metainfo.json", "w") as meta_file:
             tracker_addr = f"{self.sock.getsockname()[0]}:{self.sock.getsockname()[1]}"
-            print(tracker_addr)
             json.dump(
                 {"tracker_addr": tracker_addr},
                 meta_file,
@@ -141,7 +148,6 @@ class Tracker:
                 continue
 
             command, *args = data.split()
-            print(args)
             if command == "fetch":
                 self.fetch_response(node_socket, args)
             elif command == "close":
@@ -150,12 +156,14 @@ class Tracker:
                 break
             elif command == "publish":
                 try:
-                    file_info = json.loads(args[0])
+                    file_info = json.loads("".join(args))
+                    print(file_info)
                     TrackerUtil.update_metainfo(
                         file_info,
                         self.peers[node_addr].ip_address,
                         self.peers[node_addr].peer_upload_port,
                     )
+                    print(self.peers[node_addr].file_info)
                     self.peers[node_addr].file_info = file_info
                     node_socket.send("OK".encode())
                 except Exception as e:
