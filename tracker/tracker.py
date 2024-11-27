@@ -263,6 +263,7 @@ class TrackerUtil:
             meta_info = json.load(meta_file)
             for file_name, file_info in file_info.items():
                 node_address = f"{ip_address}:{upload_port}"
+                print(node_address)
                 if (
                     file_name in meta_info
                     and not node_address in meta_info[file_name]["nodes"]
