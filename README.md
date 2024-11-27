@@ -1,3 +1,4 @@
+
 # **SIMPLE TORRENT-LIKE APPLICATION**
 
 ## **Objective**
@@ -22,6 +23,7 @@ the TCP/IP protocol stack and must support **multi-direction data transfering (M
   tracker.
 - **MDDT**: The client can download multiple files from multiple source nodes at once,
   simultaneously.
+- An node application will contain 3 folders: **repo** for storing your real files, **pieces** for storing the pieces divided from **repo** and **temp** will contain the pieces downloaded from other nodes, which will then combine into a complete file and stored in **repo** folder.
 
 ## **Getting started**
 
@@ -35,18 +37,12 @@ the TCP/IP protocol stack and must support **multi-direction data transfering (M
 1. Clone the repository and navigate the project directory
 
 ```bash
-   git clone https://github.com/nhatkhangcs/231-computer-network-assignment1.git
+   git clone https://github.com/lamcao1206/simple-torrent-application.git
 ```
 
 2. Connect local devices in a public wireless LAN.
-3. Each devices conduct to download the external packages used throughout implementation in the _requirement.txt_ file following the command:
-
-```bash
-   pip install -r requrirement . txt
-```
-
-4. Make sure to configure the IP and port that the tracker bind to and ensure that the IP and port that other nodes connect to matches that tracker IP and port, also configures the IP that the upload socket of each node bind to in the Torrent-like network so that it can be reached from other clients for fetching files
-5. One device run as tracker in folder tracker
+3. Make sure to configure the IP and port that the tracker bind to and ensure that the IP and port that other nodes connect to matches that tracker IP and port, also configures the IP that the upload socket of each node bind to in the Torrent-like network so that it can be reached from other clients for fetching files
+4. One device run as tracker in folder tracker
 
 ```bash
    python tracker.py
@@ -55,15 +51,22 @@ the TCP/IP protocol stack and must support **multi-direction data transfering (M
 6. Other devices run as nodes in folder node
 
 ```bash
-   python node.py
+   python node.py --host=<tracker_ip> --port=<tracker_port>
 ```
 
 **NOTE:** When tracker listening connection from nodes, if failed, temporarily turning off your firewall and antivirus software,then try again.
 
 ## **Tracker command-shell interpreter**
-
+```bash
+   list
+   exit
+```
 ## **Node command-shell interpreter**
-
+```bash
+   fetch [files]
+   pieces
+   exit
+```
 ## **Contributing**
 
 For contribution actions, please fork the repository and create a pull request. Our team will verify it before merging to our project
