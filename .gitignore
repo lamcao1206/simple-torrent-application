@@ -1,11 +1,7 @@
 .vs_code
-
-main.py 
-fetch.yaml 
+.DS_Store
 .prettierignore
 
 __pycache__/
 pieces/
 temp/
-node1/
-node2/

@@ -3,6 +3,7 @@
 
 from typing import Tuple, List, Dict
 from threading import Thread
+from tqdm import tqdm
 import socket
 import os
 import mmap
@@ -244,6 +245,8 @@ class Node:
                     request_queues[(ip_addr, upload_port)] = []
                     request_pieces_obj[(ip_addr, upload_port)] = pieces_info
                     display_data[str((ip_addr, upload_port))] = []
+
+            print("Ok")
 
             for file in requested_files:
                 file_request_queue = NodeUtils.get_request_queue(
@@ -562,8 +565,6 @@ class NodeUtils:
         # get request_queue for each node
         request_queue = {key: [] for key in data}
         file_name = filename.split(".")[0]
-        file_extension = filename.split(".")[1]
-        request_queue = create_request_queue(file_name, file_extension, data)
         file_extension = filename.split(".")[1]
         request_queue = create_request_queue(file_name, file_extension, data)
 

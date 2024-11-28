@@ -364,6 +364,8 @@ class Node:
                     [f for f in os.listdir(TEMP_FOLDER) if f.startswith(piece_prefix)],
                     key=lambda x: int(x.split("_")[1].split(".")[0]),
                 )
+                if len(pieces) == 0:
+                    continue
                 for piece in pieces:
                     piece_path = os.path.join(TEMP_FOLDER, piece)
                     with open(piece_path, "rb") as piece_file:
