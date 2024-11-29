@@ -178,7 +178,6 @@ class Tracker:
             files_name (str): list of files that the peer want to fetch (fetch 3.txt 4.txt)
         """
         response = {}
-        response["exclude"] = []
         for file_name in files_name:
             exist = False
             for peer in self.peers.values():
@@ -190,7 +189,7 @@ class Tracker:
                         "upload_port": peer.peer_upload_port,
                     }
             if not exist:
-                response.setdefault("exclude", []).append(file_name)
+                response.setdefault("not_found", []).append(file_name)
         tracker_ip = self.sock.getsockname()[0]
         tracker_port = self.sock.getsockname()[1]
         response["tracker_ip"] = f"{tracker_ip}:{tracker_port}"

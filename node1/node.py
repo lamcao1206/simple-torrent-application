@@ -208,21 +208,27 @@ class Node:
                 "Fetching to tracker to get peers information may contain pieces of requested files..."
             )
 
-            self.tracker_send_socket.sendall(message.encode())
+            tracker_sending_msg = f"fetch {' '.join(requested_files)}"
+            self.tracker_send_socket.sendall(tracker_sending_msg.encode())
             data = self.tracker_send_socket.recv(1024).decode()
             data = json.loads(data)
             print("[Result]:")
             print(json.dumps(data, indent=4))
             requested_files = [
-                file for file in requested_files if file not in data["exclude"]
+                file for file in requested_files if file not in data["not_found"]
             ]
 
             # {'127.0.0.1:54782': {'ip_addr': '127.0.0.1', 'upload_port': 54781}, '127.0.0.1:54784': {'ip_addr': '127.0.0.1', 'upload_port': 54783}, 'tracker_ip': '127.0.0.1:8000'}
 
             # Send request to other peers to get pieces information of those peers
-            if len(data) == 2 or requested_files == 0:
+            if len(data) == 2 or len(requested_files) == 0:
                 print("[Warning]: No peers found that contain the requested files")
                 return
+
+            if len(data["not_found"]) > 0:
+                print(
+                    f"[Warning]: Files not found in the current network: {data['not_found']}"
+                )
 
             print("Requesting pieces information from peers...", end=" ")
             request_pieces_obj: Dict[Tuple[str, int], Dict[str, List[str]]] = {}
