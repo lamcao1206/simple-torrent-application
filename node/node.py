@@ -3,7 +3,6 @@
 
 from typing import Tuple, List, Dict
 from threading import Thread
-from tqdm import tqdm
 import socket
 import os
 import mmap
@@ -214,10 +213,14 @@ class Node:
             data = json.loads(data)
             print("[Result]:")
             print(json.dumps(data, indent=4))
+            requested_files = [
+                file for file in requested_files if file not in data["exclude"]
+            ]
+
             # {'127.0.0.1:54782': {'ip_addr': '127.0.0.1', 'upload_port': 54781}, '127.0.0.1:54784': {'ip_addr': '127.0.0.1', 'upload_port': 54783}, 'tracker_ip': '127.0.0.1:8000'}
 
             # Send request to other peers to get pieces information of those peers
-            if len(data) == 1:
+            if len(data) == 2 or requested_files == 0:
                 print("[Warning]: No peers found that contain the requested files")
                 return
 
@@ -281,9 +284,7 @@ class Node:
                 os.unlink(os.path.join(TEMP_FOLDER, file))
 
             # Publish new file info to tracker
-            new_file_info = NodeUtils.generate_files_info_from(
-                REPO_FOLDER, requested_files
-            )
+            new_file_info = NodeUtils.generate_files_info_from(REPO_FOLDER)
             msg = f"publish {new_file_info}"
             self.tracker_send_socket.send(msg.encode())
             time.sleep(0.1)

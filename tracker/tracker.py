@@ -42,10 +42,9 @@ class Peer:
         self.peer_socket.close()
         with open("metainfo.json", "r+") as meta_file:
             meta_info = json.load(meta_file)
-
             for file_name in list(self.file_info.keys()):
                 if file_name in meta_info:
-                    node_address = f"{self.ip_address}:{self.peer_upload_port}"
+                    node_address = f"{self.ip_address}:{self.peer_listening_port}"
                     if node_address in meta_info[file_name]["nodes"]:
                         meta_info[file_name]["nodes"].remove(node_address)
 
@@ -102,7 +101,7 @@ class Tracker:
                     )
 
                     TrackerUtil.update_metainfo(
-                        json.loads(peer_info[3]), peer_info[0], int(peer_info[2])
+                        json.loads(peer_info[3]), peer_info[0], int(peer_info[1])
                     )
 
                     peer_thread: Thread = Thread(
@@ -161,7 +160,7 @@ class Tracker:
                     TrackerUtil.update_metainfo(
                         file_info,
                         self.peers[node_addr].ip_address,
-                        self.peers[node_addr].peer_upload_port,
+                        self.peers[node_addr].peer_listening_port,
                     )
                     print(self.peers[node_addr].file_info)
                     self.peers[node_addr].file_info = file_info
@@ -181,14 +180,19 @@ class Tracker:
             files_name (str): list of files that the peer want to fetch (fetch 3.txt 4.txt)
         """
         response = {}
+        response["exclude"] = []
         for file_name in files_name:
+            exist = False
             for peer in self.peers.values():
                 if file_name in peer.file_info:
+                    exist = True
                     response[f"{peer.ip_address}:{peer.peer_listening_port}"] = {
                         "peer_ip": f"{peer.ip_address}:{peer.peer_listening_port}",
                         "ip_addr": peer.ip_address,
                         "upload_port": peer.peer_upload_port,
                     }
+            if not exist:
+                response.setdefault("exclude", []).append(file_name)
         tracker_ip = self.sock.getsockname()[0]
         tracker_port = self.sock.getsockname()[1]
         response["tracker_ip"] = f"{tracker_ip}:{tracker_port}"
@@ -268,7 +272,7 @@ class TrackerUtil:
                     and not node_address in meta_info[file_name]["nodes"]
                 ):
                     meta_info[file_name]["nodes"].append(node_address)
-                else:
+                elif file_name not in meta_info:
                     meta_info[file_name] = file_info
                     meta_info[file_name]["nodes"] = [node_address]
 
