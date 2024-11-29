@@ -156,13 +156,11 @@ class Tracker:
             elif command == "publish":
                 try:
                     file_info = json.loads("".join(args))
-                    print(file_info)
                     TrackerUtil.update_metainfo(
                         file_info,
                         self.peers[node_addr].ip_address,
                         self.peers[node_addr].peer_listening_port,
                     )
-                    print(self.peers[node_addr].file_info)
                     self.peers[node_addr].file_info = file_info
                     node_socket.send("OK".encode())
                 except Exception as e:
