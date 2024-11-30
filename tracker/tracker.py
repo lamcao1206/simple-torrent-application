@@ -168,6 +168,15 @@ class Tracker:
                     node_socket.send(
                         "Some error occurred while updating metadata on tracker".encode()
                     )
+            elif command == "discover":
+                response = []
+                with open("metainfo.json", "r") as meta_file:
+                    meta_info = json.load(meta_file)
+                    for file_name, file_info in meta_info.items():
+                        response.append(file_name)
+                response.remove("tracker_addr")
+                node_socket.send(json.dumps(response).encode())
+
         node_socket.close()
 
     def fetch_response(self, node_socket: socket.socket, files_name: str) -> None:
@@ -178,6 +187,7 @@ class Tracker:
             files_name (str): list of files that the peer want to fetch (fetch 3.txt 4.txt)
         """
         response = {}
+        response["exclude"] = []
         for file_name in files_name:
             exist = False
             for peer in self.peers.values():
@@ -189,7 +199,7 @@ class Tracker:
                         "upload_port": peer.peer_upload_port,
                     }
             if not exist:
-                response.setdefault("not_found", []).append(file_name)
+                response.setdefault("exclude", []).append(file_name)
         tracker_ip = self.sock.getsockname()[0]
         tracker_port = self.sock.getsockname()[1]
         response["tracker_ip"] = f"{tracker_ip}:{tracker_port}"

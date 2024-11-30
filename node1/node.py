@@ -2,6 +2,7 @@
 # Date modified: Thursday 22st Nov 2024
 
 from typing import Tuple, List, Dict
+import traceback
 from threading import Thread
 import socket
 import os
@@ -214,21 +215,17 @@ class Node:
             data = json.loads(data)
             print("[Result]:")
             print(json.dumps(data, indent=4))
-            requested_files = [
-                file for file in requested_files if file not in data["not_found"]
-            ]
+            if "exclude" in data:
+                requested_files = [
+                    file for file in requested_files if file not in data["exclude"]
+                ]
 
             # {'127.0.0.1:54782': {'ip_addr': '127.0.0.1', 'upload_port': 54781}, '127.0.0.1:54784': {'ip_addr': '127.0.0.1', 'upload_port': 54783}, 'tracker_ip': '127.0.0.1:8000'}
 
             # Send request to other peers to get pieces information of those peers
-            if len(data) == 2 or len(requested_files) == 0:
+            if len(data) == 1 or len(requested_files) == 0:
                 print("[Warning]: No peers found that contain the requested files")
                 return
-
-            if len(data["not_found"]) > 0:
-                print(
-                    f"[Warning]: Files not found in the current network: {data['not_found']}"
-                )
 
             print("Requesting pieces information from peers...", end=" ")
             request_pieces_obj: Dict[Tuple[str, int], Dict[str, List[str]]] = {}
@@ -299,6 +296,7 @@ class Node:
                 print("[Error]: Failed to publish new file info to tracker")
 
         except Exception as e:
+            print(traceback.format_exc())
             print(f"[Error]: Unexpected error during fetch: {e}")
 
     def request_pieces_info_from(
@@ -381,6 +379,11 @@ class Node:
                         ) as mmapped_file:
                             combined_file.write(mmapped_file)
 
+    def discover(self):
+        self.tracker_send_socket.send("discover".encode())
+        received_data = self.tracker_send_socket.recv(1024).decode()
+        print(received_data)
+
     def node_command_shell(self) -> None:
         # Node command shell for user to interact with the node
         while True:
@@ -397,6 +400,8 @@ class Node:
                         print(piece)
                 case "fetch":
                     self.fetch(cmd_input)
+                case "discover":
+                    self.discover()
                 case "exit":
                     self.close()
                 case _:
