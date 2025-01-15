@@ -311,7 +311,7 @@ class Node:
                 pieces_request_socket.sendall(
                     f"find {' '.join(requested_files)}".encode()
                 )
-                data = pieces_request_socket.recv(1024).decode()
+                data = pieces_request_socket.recv(10240).decode()
             return json.loads(data)
         except Exception as e:
             print(
